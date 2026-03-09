@@ -7,6 +7,8 @@ class GatewayStatus {
   final int? memoryTotal;
   final List<AgentInfo>? agents;
   final List<NodeInfo>? nodes;
+  final List<CronInfo>? crons;
+  final bool isPaused;
 
   GatewayStatus({
     required this.online,
@@ -17,6 +19,8 @@ class GatewayStatus {
     this.memoryTotal,
     this.agents,
     this.nodes,
+    this.crons,
+    this.isPaused = false,
   });
 
   factory GatewayStatus.fromJson(Map<String, dynamic> json) {
@@ -33,6 +37,10 @@ class GatewayStatus {
       nodes: (json['nodes'] as List?)
           ?.map((n) => NodeInfo.fromJson(n))
           .toList(),
+      crons: (json['crons'] as List?)
+          ?.map((c) => CronInfo.fromJson(c))
+          .toList(),
+      isPaused: json['paused'] == true || json['gateway']?['paused'] == true,
     );
   }
 }
@@ -79,6 +87,35 @@ class NodeInfo {
       status: json['status'] ?? 'unknown',
       connectionType: json['connection_type'],
       ip: json['ip'],
+    );
+  }
+}
+
+class CronInfo {
+  final String name;
+  final String schedule;
+  final bool enabled;
+  final String? lastRun;
+  final String? nextRun;
+  final String? status;
+
+  CronInfo({
+    required this.name,
+    required this.schedule,
+    required this.enabled,
+    this.lastRun,
+    this.nextRun,
+    this.status,
+  });
+
+  factory CronInfo.fromJson(Map<String, dynamic> json) {
+    return CronInfo(
+      name: json['name'] ?? 'Unknown',
+      schedule: json['schedule'] ?? '',
+      enabled: json['enabled'] ?? true,
+      lastRun: json['last_run'],
+      nextRun: json['next_run'],
+      status: json['status'],
     );
   }
 }

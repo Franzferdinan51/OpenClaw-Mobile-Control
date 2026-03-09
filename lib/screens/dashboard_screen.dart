@@ -64,10 +64,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('OpenClaw Mobile'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.pushNamed(context, '/settings'),
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshStatus,
           ),
