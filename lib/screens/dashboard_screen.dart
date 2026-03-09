@@ -4,7 +4,9 @@ import '../services/gateway_service.dart';
 import '../models/gateway_status.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final GatewayService? gatewayService;
+
+  const DashboardScreen({super.key, this.gatewayService});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -23,6 +25,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadConfig() async {
+    // Use passed service or create new one from stored settings
+    if (widget.gatewayService != null) {
+      setState(() {
+        _service = widget.gatewayService;
+        _loading = true;
+      });
+      await _refreshStatus();
+      return;
+    }
+
+    // Fallback to loading from preferences
     final prefs = await SharedPreferences.getInstance();
     final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
     final token = prefs.getString('gateway_token');

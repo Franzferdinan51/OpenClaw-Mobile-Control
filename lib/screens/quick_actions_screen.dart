@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/termux_service.dart';
+import 'termux_screen.dart';
 
 class QuickActionsScreen extends StatefulWidget {
   const QuickActionsScreen({super.key});
@@ -10,17 +12,93 @@ class QuickActionsScreen extends StatefulWidget {
 class _QuickActionsScreenState extends State<QuickActionsScreen> {
   // Track loading state for each action
   final Map<String, bool> _loadingActions = {};
+  final TermuxService _termuxService = TermuxService();
+  String? _openClawVersion;
+  bool _isTermuxAvailable = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkTermuxStatus();
+  }
+
+  Future<void> _checkTermuxStatus() async {
+    await _termuxService.initialize();
+    setState(() {
+      _isTermuxAvailable = _termuxService.isTermuxAvailable;
+      _openClawVersion = _termuxService.openClawVersion;
+    });
+  }
+
+  void _navigateToTermux() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const TermuxScreen()),
+    );
+  }
 
   void _executeAction(String actionName) async {
     setState(() {
       _loadingActions[actionName] = true;
     });
 
-    // Special handling for Update OpenClaw
-    if (actionName == 'update_openclaw') {
-      if (!mounted) return;
+    // Handle Termux-based actions
+    if (actionName == 'termux_console') {
+      _navigateToTermux();
+      setState(() => _loadingActions[actionName] = false);
+      return;
+    }
+
+    if (actionName == 'install_openclaw') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              SizedBox(width: 12),
+              Text('Installing OpenClaw via Termux...'),
+            ],
+          ),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      final result = await _termuxService.installOpenClaw();
       
-      // Show "Updating OpenClaw..." toast
+      setState(() {
+        _openClawVersion = _termuxService.openClawVersion;
+        _loadingActions[actionName] = false;
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                result.success ? Icons.check_circle : Icons.error,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 12),
+              Text(result.success ? 'OpenClaw installed: $_openClawVersion' : 'Install failed: ${result.stderr}'),
+            ],
+          ),
+          backgroundColor: result.success ? Colors.green : Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    if (actionName == 'update_openclaw') {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Row(
@@ -40,35 +118,137 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
         ),
       );
 
-      // Simulate update process (replace with actual SSH/Termux command)
-      await Future.delayed(const Duration(seconds: 2));
-
-      if (!mounted) return;
-
+      final result = await _termuxService.updateOpenClaw();
+      
       setState(() {
+        _openClawVersion = _termuxService.openClawVersion;
         _loadingActions[actionName] = false;
       });
 
-      // Show "Update complete!" toast
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Row(
             children: [
-              Icon(Icons.check_circle, color: Colors.white),
-              SizedBox(width: 12),
-              Text('Update complete!'),
+              Icon(
+                result.success ? Icons.check_circle : Icons.error,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 12),
+              Text(result.success ? 'Updated to: $_openClawVersion' : 'Update failed: ${result.stderr}'),
             ],
           ),
-          backgroundColor: Colors.green,
+          backgroundColor: result.success ? Colors.green : Colors.red,
           behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 3),
         ),
       );
       return;
     }
 
-    // Simulate API call delay (replace with actual HTTP service calls)
-    await Future.delayed(const Duration(milliseconds: 800));
+    if (actionName == 'setup_node') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              SizedBox(width: 12),
+              Text('Setting up node...'),
+            ],
+          ),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      final result = await _termuxService.setupNode();
+      
+      setState(() {
+        _loadingActions[actionName] = false;
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                result.success ? Icons.check_circle : Icons.error,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 12),
+              Text(result.success ? 'Node setup complete!' : 'Setup failed: ${result.stderr}'),
+            ],
+          ),
+          backgroundColor: result.success ? Colors.green : Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    // Quick command execution
+    if (actionName.startsWith('cmd_')) {
+      final command = actionName.substring(4); // Remove 'cmd_' prefix
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Text('Running: $command'),
+            ],
+          ),
+          backgroundColor: Colors.blue,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 1),
+        ),
+      );
+
+      final result = await _termuxService.runQuickCommand(command);
+      
+      setState(() {
+        _loadingActions[actionName] = false;
+      });
+
+      if (!mounted) return;
+
+      // Show result dialog
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(command),
+          content: SingleChildScrollView(
+            child: SelectableText(
+              result.output.isNotEmpty ? result.output : '(no output)',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // Default fallback for other actions
+    await Future.delayed(const Duration(milliseconds: 500));
 
     if (!mounted) return;
 
@@ -76,7 +256,6 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
       _loadingActions[actionName] = false;
     });
 
-    // Show toast with result
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Action: $actionName executed'),
@@ -145,12 +324,32 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
           ),
           const SizedBox(height: 16),
           _buildCategory(
-            '⚙️ SETUP',
-            Icons.settings,
+            '📱 TERMUX',
+            Icons.terminal,
             [
+              _ActionItem('Console', Icons.terminal, 'termux_console'),
               _ActionItem('Install OpenClaw', Icons.download, 'install_openclaw'),
               _ActionItem('Update OpenClaw', Icons.system_update, 'update_openclaw'),
               _ActionItem('Setup Node', Icons.computer, 'setup_node'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildCategory(
+            '⚡ QUICK COMMANDS',
+            Icons.flash_on,
+            [
+              _ActionItem('openclaw status', Icons.info_outline, 'cmd_openclaw status'),
+              _ActionItem('gateway restart', Icons.refresh, 'cmd_openclaw gateway restart'),
+              _ActionItem('nodes status', Icons.hub, 'cmd_openclaw nodes status'),
+              _ActionItem('gateway start', Icons.play_arrow, 'cmd_openclaw gateway start'),
+              _ActionItem('gateway stop', Icons.stop, 'cmd_openclaw gateway stop'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildCategory(
+            '⚙️ SETUP',
+            Icons.settings,
+            [
               _ActionItem('Connect Gateway', Icons.wifi_tethering, 'connect_gateway'),
               _ActionItem('Guided Setup', Icons.auto_fix_high, 'guided_setup'),
             ],
