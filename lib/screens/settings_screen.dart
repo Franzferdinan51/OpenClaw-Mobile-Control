@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_status.dart';
 import '../services/discovery_service.dart';
+import '../services/tailscale_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Function()? onGatewayChanged;
@@ -16,12 +17,19 @@ class _SettingsScreenState extends State<SettingsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final DiscoveryService _discoveryService = DiscoveryService();
+  final TailscaleService _tailscaleService = TailscaleService();
 
   // Manual entry controllers
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _urlController;
   late TextEditingController _portController;
   late TextEditingController _tokenController;
+
+  // Tailscale entry
+  final _tailscaleController = TextEditingController();
+  final _tailscaleNameController = TextEditingController();
+  bool _tailscaleRunning = false;
+  List<GatewayConnection> _tailscaleGateways = [];
 
   // UI state
   bool _saving = false;
@@ -35,13 +43,14 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this); // Added Tailscale tab
     _urlController = TextEditingController();
     _portController = TextEditingController(text: '18789');
     _tokenController = TextEditingController();
 
     _loadSettings();
     _loadHistory();
+    _checkTailscale();
     _startDiscovery();
   }
 
@@ -70,6 +79,18 @@ class _SettingsScreenState extends State<SettingsScreen>
     setState(() {
       _history = history;
     });
+  }
+
+  Future<void> _checkTailscale() async {
+    final isRunning = await _tailscaleService.isTailscaleRunning();
+    final gateways = await _tailscaleService.getSavedTailscaleGateways();
+    
+    if (mounted) {
+      setState(() {
+        _tailscaleRunning = isRunning;
+        _tailscaleGateways = gateways;
+      });
+    }
   }
 
   Future<void> _startDiscovery() async {
@@ -214,12 +235,62 @@ class _SettingsScreenState extends State<SettingsScreen>
     await _loadHistory();
   }
 
+  Future<void> _addTailscaleGateway() async {
+    if (_tailscaleController.text.isEmpty) return;
+
+    final gateway = TailscaleService.parseTailscaleUrl(
+      _tailscaleController.text,
+      name: _tailscaleNameController.text.isNotEmpty 
+          ? _tailscaleNameController.text 
+          : null,
+    );
+
+    if (gateway == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invalid Tailscale URL'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Test connection
+    final success = await _discoveryService.testConnection(gateway);
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not connect to Tailscale gateway'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Save Tailscale gateway
+    await _tailscaleService.saveTailscaleGateway(gateway);
+    await _checkTailscale();
+
+    // Connect
+    await _connectToGateway(gateway);
+
+    _tailscaleController.clear();
+    _tailscaleNameController.clear();
+  }
+
+  Future<void> _removeTailscaleGateway(String url) async {
+    await _tailscaleService.removeTailscaleGateway(url);
+    await _checkTailscale();
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
     _urlController.dispose();
     _portController.dispose();
     _tokenController.dispose();
+    _tailscaleController.dispose();
+    _tailscaleNameController.dispose();
     _discoveryService.dispose();
     super.dispose();
   }
@@ -231,10 +302,12 @@ class _SettingsScreenState extends State<SettingsScreen>
         title: const Text('Gateway Settings'),
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           tabs: const [
             Tab(icon: Icon(Icons.wifi_find), text: 'Discover'),
             Tab(icon: Icon(Icons.edit), text: 'Manual'),
             Tab(icon: Icon(Icons.history), text: 'History'),
+            Tab(icon: Icon(Icons.vpn_lock), text: 'Tailscale'),
           ],
         ),
       ),
@@ -244,6 +317,7 @@ class _SettingsScreenState extends State<SettingsScreen>
           _buildDiscoverTab(),
           _buildManualTab(),
           _buildHistoryTab(),
+          _buildTailscaleTab(),
         ],
       ),
     );
@@ -276,7 +350,16 @@ class _SettingsScreenState extends State<SettingsScreen>
               ),
               IconButton(
                 icon: const Icon(Icons.refresh),
-                onPressed: _startDiscovery,
+                onPressed: () async {
+                  setState(() => _scanning = true);
+                  final found = await _discoveryService.scan();
+                  if (mounted) {
+                    setState(() {
+                      _discovered = found;
+                      _scanning = false;
+                    });
+                  }
+                },
                 tooltip: 'Scan again',
               ),
             ],
@@ -306,6 +389,12 @@ class _SettingsScreenState extends State<SettingsScreen>
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () => _tabController.animateTo(1),
+                        icon: const Icon(Icons.edit),
+                        label: const Text('Enter Manually'),
+                      ),
                     ],
                   ),
                 )
@@ -318,7 +407,8 @@ class _SettingsScreenState extends State<SettingsScreen>
                       margin: const EdgeInsets.only(bottom: 12),
                       child: ListTile(
                         leading: const CircleAvatar(
-                          child: Icon(Icons.dns),
+                          backgroundColor: Colors.green,
+                          child: Icon(Icons.dns, color: Colors.white),
                         ),
                         title: Text(gateway.name ?? gateway.displayName),
                         subtitle: Text(gateway.url),
@@ -540,6 +630,128 @@ class _SettingsScreenState extends State<SettingsScreen>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildTailscaleTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Tailscale status card
+          Card(
+            color: _tailscaleRunning 
+                ? Colors.green.withOpacity(0.1) 
+                : Colors.orange.withOpacity(0.1),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(
+                    _tailscaleRunning ? Icons.vpn_lock : Icons.vpn_lock_outlined,
+                    color: _tailscaleRunning ? Colors.green : Colors.orange,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _tailscaleRunning 
+                              ? 'Tailscale Connected' 
+                              : 'Tailscale Not Detected',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        Text(
+                          _tailscaleRunning
+                              ? 'You can connect to Tailscale gateways'
+                              : 'Connect to Tailscale VPN first',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Add Tailscale gateway
+          Text(
+            'Add Tailscale Gateway',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Enter a Tailscale URL (e.g., https://node.tailnet.ts.net or http://100.x.x.x:18789)',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: _tailscaleController,
+            decoration: const InputDecoration(
+              labelText: 'Tailscale URL',
+              hintText: 'https://node.tailnet.ts.net',
+              prefixIcon: Icon(Icons.link),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          TextField(
+            controller: _tailscaleNameController,
+            decoration: const InputDecoration(
+              labelText: 'Name (optional)',
+              hintText: 'Home Server',
+              prefixIcon: Icon(Icons.label),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          ElevatedButton.icon(
+            onPressed: _addTailscaleGateway,
+            icon: const Icon(Icons.add),
+            label: const Text('Add & Connect'),
+          ),
+          const SizedBox(height: 32),
+
+          // Saved Tailscale gateways
+          if (_tailscaleGateways.isNotEmpty) ...[
+            Text(
+              'Saved Tailscale Gateways',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            ...(_tailscaleGateways.map((gateway) => Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.purple,
+                  child: Icon(Icons.vpn_lock, color: Colors.white),
+                ),
+                title: Text(gateway.displayName),
+                subtitle: Text(gateway.url),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _removeTailscaleGateway(gateway.url),
+                      tooltip: 'Remove',
+                    ),
+                    ElevatedButton(
+                      onPressed: () => _connectToGateway(gateway),
+                      child: const Text('Connect'),
+                    ),
+                  ],
+                ),
+              ),
+            ))),
+          ],
+        ],
+      ),
     );
   }
 

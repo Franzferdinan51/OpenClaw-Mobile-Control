@@ -9,6 +9,10 @@ import 'screens/quick_actions_screen.dart';
 import 'screens/control_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/browser_control_screen.dart';
+import 'screens/workflows_screen.dart';
+import 'screens/scheduled_tasks_screen.dart';
+import 'screens/llm_hub_screen.dart';
 
 class OpenClawApp extends StatefulWidget {
   const OpenClawApp({super.key});
@@ -267,6 +271,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           const ControlScreen(),
           const LogsScreen(),
           const SettingsScreen(),
+          // BrowserOS MCP screens
+          const BrowserControlScreen(),
+          const WorkflowsScreen(),
+          const ScheduledTasksScreen(),
+          const LlmHubScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -306,6 +315,27 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
             label: 'Settings',
+          ),
+          // BrowserOS MCP navigation
+          NavigationDestination(
+            icon: Icon(Icons.public_outlined),
+            selectedIcon: Icon(Icons.public),
+            label: 'Browser',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_tree_outlined),
+            selectedIcon: Icon(Icons.account_tree),
+            label: 'Workflows',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.schedule_outlined),
+            selectedIcon: Icon(Icons.schedule),
+            label: 'Tasks',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.psychology_outlined),
+            selectedIcon: Icon(Icons.psychology),
+            label: 'LLM Hub',
           ),
         ],
       ),

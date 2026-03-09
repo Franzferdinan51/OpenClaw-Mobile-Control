@@ -11,16 +11,18 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.6
   http: ^1.1.0
-  shared_preferences: ^2.2.2
-  path_provider: ^2.1.2
-  provider: ^6.1.1
   web_socket_channel: ^2.4.0
-  multicast_dns: ^0.3.2+6
-  encrypt: ^5.0.3
-  local_auth: ^2.1.8
-  connectivity_plus: ^5.0.2
+  shared_preferences: ^2.2.2
+  provider: ^6.1.1
+  path_provider: ^2.1.2
   uuid: ^4.2.2
   intl: ^0.19.0
+  # Automation & Webhook Dependencies
+  shelf: ^1.4.1  # HTTP server for webhooks
+  shelf_router: ^1.1.4  # Router for shelf
+  webkit_inspection_protocol: ^1.2.1  # JavaScript execution
+  cron: ^0.6.1  # Cron scheduling
+  multicast_dns: ^0.3.2+4  # mDNS/Bonjour discovery
 
 dev_dependencies:
   flutter_test:
