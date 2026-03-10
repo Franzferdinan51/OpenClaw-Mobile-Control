@@ -613,3 +613,67 @@ These P0/P1 tasks provide immediate value with minimal effort:
 4. Test on local network
 5. Add connection prompts/notifications
 
+
+### UX - Confusing UI (2026-03-10 02:15 AM)
+
+| Bug | Description | Priority |
+|-----|-------------|----------|
+| **UX-CONNECT-001** | Multiple duplicate ways to connect to gateway | P1 - High |
+| **UX-CONNECT-002** | Confusing connection flow | P1 - High |
+| **UX-CONNECT-003** | Too many connection screens/tabs | P1 - High |
+
+**Reported by:** Duckets  
+**Notes:**
+- User sees multiple ways to connect (Settings tabs, discovery screens, manual entry, etc.)
+- Very confusing for users
+- Need to consolidate into ONE clear connection flow
+- Remove duplicate connection methods
+- Simplify UX
+
+**To Fix:**
+1. Audit all connection-related screens
+2. Consolidate into single connection flow
+3. Remove duplicate tabs/screens
+4. Clear, simple connection wizard
+5. Auto-discover → Manual fallback (single screen)
+
+
+---
+
+## 📝 FEATURE REQUEST - Termux Setup Script (2026-03-10 03:18 AM)
+
+### P1 - High Priority
+
+| Feature | Description | Priority |
+|---------|-------------|----------|
+| **FEATURE-TERMUX-001** | Create custom guided Android Termux setup script | P1 - High |
+
+**Requested by:** Duckets  
+**Reference:** https://github.com/Franzferdinan51/openclaw-android-main
+
+**Description:**
+Create a guided setup script for Termux that:
+- Automatically installs OpenClaw on Android
+- Guides user through configuration
+- Sets up gateway connection
+- Configures Tailscale if needed
+- Simple, step-by-step process
+
+**Implementation:**
+- Create bash script for Termux
+- Auto-install dependencies (Node.js, npm)
+- Auto-install OpenClaw (`npm install -g openclaw`)
+- Interactive configuration wizard
+- Test connection to gateway
+- Save configuration
+
+**Files to Create:**
+- `scripts/termux-setup.sh` (guided setup script)
+- `docs/TERMUX-SETUP-GUIDE.md` (documentation)
+
+**Benefits:**
+- Easy Android installation
+- No manual commands needed
+- Guided, user-friendly
+- Perfect for non-technical users
+
