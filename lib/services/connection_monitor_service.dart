@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_status.dart';
 import 'gateway_service.dart';
 
@@ -194,6 +195,47 @@ class ConnectionMonitorService extends ChangeNotifier {
     stopMonitoring();
     _state = const AppConnectionState();
     notifyListeners();
+  }
+
+  /// Connect to a new gateway URL
+  Future<bool> connect(String url, {String? token}) async {
+    try {
+      _state = _state.copyWith(
+        status: ConnectionStatus.connecting,
+        gatewayUrl: url,
+        errorMessage: null,
+      );
+      notifyListeners();
+
+      // Save to preferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('gateway_url', url);
+      if (token != null) {
+        await prefs.setString('gateway_token', token);
+      }
+
+      // Create new gateway service
+      _gatewayService = GatewayService(baseUrl: url, token: token);
+      _isMonitoring = true;
+
+      // Test connection
+      final success = await testConnection();
+
+      if (success) {
+        // Start monitoring
+        _pingTimer?.cancel();
+        _pingTimer = Timer.periodic(_pingInterval, (_) => _doPing());
+      }
+
+      return success;
+    } catch (e) {
+      _state = _state.copyWith(
+        status: ConnectionStatus.error,
+        errorMessage: e.toString(),
+      );
+      notifyListeners();
+      return false;
+    }
   }
 
   void _doPing() async {

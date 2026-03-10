@@ -1,36 +1,136 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/gateway_status.dart';
 import '../models/agent_session.dart';
 import '../models/autowork_config.dart';
 import '../models/chat_message.dart';
 
+/// Service for communicating with OpenClaw Gateway
+/// 
+/// IMPLEMENTATION NOTES (from studying reference repos):
+/// - Gateway typically runs on localhost (127.0.0.1:18789) when on device
+/// - Or on local network (192.168.x.x:18789) when remote
+/// - Supports Tailscale IPs (100.x.x.x:18789)
+/// - All connections use HTTP (not HTTPS) for local networks
+/// - Timeout handling is critical for mobile networks
 class GatewayService {
   String baseUrl;
   String? token;
+  
+  // Timeout configurations
+  static const Duration _defaultTimeout = Duration(seconds: 15);
+  static const Duration _shortTimeout = Duration(seconds: 5);
+  static const Duration _longTimeout = Duration(seconds: 30);
 
-  GatewayService({this.baseUrl = 'http://localhost:18789', this.token});
+  GatewayService({this.baseUrl = 'http://127.0.0.1:18789', this.token});
 
+  /// Build request headers with optional auth token
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
         if (token != null) 'Authorization': 'Bearer $token',
       };
 
-  Future<GatewayStatus?> getStatus() async {
+  /// Validate and normalize gateway URL
+  /// 
+  /// Handles common URL issues:
+  /// - Adds http:// if missing
+  /// - Removes trailing slashes
+  /// - Validates IP format
+  static String? validateUrl(String url) {
+    if (url.isEmpty) return null;
+    
+    String normalized = url.trim();
+    
+    // Add protocol if missing
+    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      normalized = 'http://$normalized';
+    }
+    
+    // Remove trailing slash
+    normalized = normalized.replaceAll(RegExp(r'/$'), '');
+    
+    // Basic validation
+    try {
+      final uri = Uri.parse(normalized);
+      if (uri.host.isEmpty) return null;
+      return normalized;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Get gateway status with timeout
+  /// 
+  /// This is the primary health check endpoint
+  Future<GatewayStatus?> getStatus({Duration? timeout}) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/api/mobile/status'),
         headers: _headers,
-      );
+      ).timeout(timeout ?? _shortTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
         return GatewayStatus.fromJson(json);
+      } else {
+        print('⚠️ Gateway returned status ${response.statusCode}');
       }
+    } on TimeoutException {
+      print('⏱️ Gateway status request timed out');
+    } on SocketException catch (e) {
+      print('❌ Connection refused: $e');
     } catch (e) {
-      print('Error getting status: $e');
+      print('❌ Error getting status: $e');
     }
     return null;
+  }
+
+  /// Check if gateway is reachable
+  /// 
+  /// Quick check for connectivity
+  Future<bool> isReachable() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/mobile/status'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 3));
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Check if gateway is reachable with detailed error
+  /// 
+  /// Returns a map with success status and error message if failed
+  Future<Map<String, dynamic>> checkConnection() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/mobile/status'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        return {'success': true, 'status': response.statusCode};
+      } else {
+        return {
+          'success': false, 
+          'error': 'HTTP ${response.statusCode}',
+          'status': response.statusCode
+        };
+      }
+    } on TimeoutException {
+      return {'success': false, 'error': 'Connection timed out'};
+    } on SocketException catch (e) {
+      return {'success': false, 'error': 'Connection refused: ${e.message}'};
+    } on FormatException {
+      return {'success': false, 'error': 'Invalid URL format'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
   }
 
   // ============================================================
@@ -254,7 +354,6 @@ class GatewayService {
   }
 
   /// Get logs from the gateway
-  /// Returns a list of log entries or a map with 'logs' key
   Future<dynamic> getLogs({int limit = 100, String? level, String? source}) async {
     try {
       final queryParams = <String, String>{
@@ -277,13 +376,30 @@ class GatewayService {
 
   /// Test connection to the gateway
   Future<bool> testConnection() async {
-    try {
-      final status = await getStatus();
-      return status != null;
-    } catch (e) {
-      return false;
+    return await isReachable();
+  }
+
+  /// Update the base URL
+  void setBaseUrl(String url) {
+    // Validate and normalize
+    final normalized = validateUrl(url);
+    if (normalized != null) {
+      baseUrl = normalized;
+      print('🔄 Gateway URL updated to: $baseUrl');
+    } else {
+      print('⚠️ Invalid URL format: $url');
     }
   }
+
+  /// Update the token
+  void setToken(String? newToken) {
+    token = newToken;
+    print(newToken != null ? '🔐 Token updated' : '🔓 Token cleared');
+  }
+
+  // ============================================================
+  // Control APIs
+  // ============================================================
 
   // Gateway Controls
   Future<Map<String, dynamic>?> restartGateway(String reason) async {
@@ -342,7 +458,7 @@ class GatewayService {
         Uri.parse('$baseUrl$endpoint'),
         headers: _headers,
         body: jsonEncode(body),
-      );
+      ).timeout(_defaultTimeout);
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);

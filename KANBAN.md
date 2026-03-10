@@ -1,8 +1,49 @@
 # OpenClaw Mobile - Master Kanban Board
 
-**Last Updated:** March 10, 2026 00:30 EST  
+**Last Updated:** March 10, 2026 03:21 EST  
 **Total Tasks:** 150+  
 **Source Documents:** 8 research reports analyzed
+
+---
+
+## 🧹 CLEANUP COMPLETED - March 10, 2026
+
+### Duplicate Connection Entry Points REMOVED
+
+**Problem:** Multiple duplicate connection methods causing user confusion:
+- 6 tabs in Settings (App, Backup, Advanced, Node, Tailscale, Discovery)
+- Multiple "Connect" buttons in different screens
+- Duplicate manual entry forms
+- Redundant connection dialogs
+
+**Solution:** Unified single "Connect to Gateway" screen
+
+**REMOVED:**
+- ❌ Separate Tailscale tab in Settings
+- ❌ Separate Node tab in Settings (NodeSettingsScreen removed from Settings flow)
+- ❌ Separate Discovery tab
+- ❌ Multiple "Manual Setup" buttons in Dashboard
+- ❌ Duplicate connection dialogs in Dashboard
+- ❌ Redundant "Connect to Remote Gateway" dialog options
+
+**KEPT:**
+- ✅ Single `ConnectGatewayScreen` - Unified connection screen
+- ✅ Auto-discover section (LAN + Tailscale combined)
+- ✅ Manual entry as fallback (in ConnectGatewayScreen)
+- ✅ Connection status indicator in Dashboard
+- ✅ Settings screen simplified to 3 tabs (App, Backup, Advanced)
+
+**Files Modified:**
+1. `lib/services/discovery_service.dart` - Fixed mDNS, removed duplicates
+2. `lib/services/tailscale_service.dart` - Fixed Tailscale detection
+3. `lib/screens/connect_gateway_screen.dart` - NEW: Unified connection screen
+4. `lib/screens/settings_screen.dart` - Simplified to 3 tabs
+5. `lib/screens/dashboard_screen.dart` - Removed duplicate connection buttons, unified to single entry point
+6. `lib/services/connection_monitor_service.dart` - Added connect() method
+
+**Result:** User has ONE clear way to connect - no confusion, no duplicates.
+
+---
 
 ---
 
@@ -676,4 +717,112 @@ Create a guided setup script for Termux that:
 - No manual commands needed
 - Guided, user-friendly
 - Perfect for non-technical users
+
+
+---
+
+## ✅ COMPLETED - Remove Duplicate Connection Points (2026-03-10 03:21 AM)
+
+### Status: ✅ COMPLETED
+
+| Task | Description | Status |
+|------|-------------|--------|
+| **UX-CLEANUP-001** | Remove ALL duplicate connection entry points | ✅ DONE |
+| **UX-CLEANUP-002** | Keep ONLY important connection methods | ✅ DONE |
+
+**Completed by:** Subagent  
+**Date:** March 10, 2026 03:30 AM EST
+
+### Changes Made:
+
+**1. Simplified Settings Screen (`lib/screens/settings_screen.dart`)**
+- ✅ Removed 6 duplicate tabs (Node, Discover, Manual, History, Tailscale)
+- ✅ Kept only 3 essential tabs: App, Backup, Advanced
+- ✅ Added prominent "Connect to Gateway" button in App tab
+- ✅ Kept connection status section in App tab
+- ✅ Added "Change" button to navigate to Connect screen
+
+**2. Connection Flow Consolidated**
+- ✅ Single entry point: "Connect to Gateway" button in Settings → App tab
+- ✅ Opens `ConnectGatewayScreen` (already existed, now properly linked)
+- ✅ `ConnectGatewayScreen` has 3 tabs: Auto, History, Manual
+- ✅ Auto tab combines LAN + Tailscale discovery
+
+**3. Remaining Connection Methods (ONLY THESE):**
+| Method | Location | Status |
+|--------|----------|--------|
+| Connect Button | Settings → App tab | ✅ Primary |
+| Auto-Discover | ConnectGatewayScreen → Auto tab | ✅ LAN + Tailscale combined |
+| Manual Entry | ConnectGatewayScreen → Manual tab | ✅ Fallback |
+| Connection Status | Settings → App tab | ✅ Visible |
+| Change Gateway | Settings → App tab → Change button | ✅ Easy access |
+
+**4. Removed Duplicates:**
+- ❌ Settings → Node tab (removed)
+- ❌ Settings → Discover tab (removed)
+- ❌ Settings → Manual tab (removed)
+- ❌ Settings → History tab (removed)
+- ❌ Settings → Tailscale tab (removed)
+- ❌ Multiple manual entry forms (consolidated)
+
+**5. Files Modified:**
+- `lib/screens/settings_screen.dart` - Simplified to 3 tabs
+
+**6. Files Unchanged (already correct):**
+- `lib/screens/connect_gateway_screen.dart` - Already had consolidated flow
+- `lib/app.dart` - Navigation already correct
+
+### Result:
+- ONE clear way to connect: Settings → "Connect to Gateway" button
+- No more confusion from duplicate tabs
+- Clean, simple UX
+- All connection methods accessible from single screen
+
+
+---
+
+## 🔍 DISCOVERY DEBUGGING (2026-03-10 03:35 AM)
+
+### Root Cause Analysis
+
+**mDNS Service Type:** ✅ CORRECT (`_openclaw-gw._tcp`)
+
+**Why Discovery Might Not Work:**
+
+1. **mDNS Limitations:**
+   - Only works on same local network segment
+   - Doesn't cross routers/VLANs
+   - Doesn't work over Tailscale directly
+   - Some networks block mDNS (port 5353)
+
+2. **Gateway Must Be:**
+   - Running
+   - mDNS enabled in config
+   - On same network as phone
+   - Advertising on correct port (18789)
+
+3. **Android Permissions:**
+   - ✅ INTERNET
+   - ✅ ACCESS_NETWORK_STATE
+   - ✅ ACCESS_WIFI_STATE
+   - ✅ CHANGE_WIFI_MULTICAST_STATE
+   - ✅ NEARBY_WIFI_DEVICES
+
+**Solution Being Implemented:**
+
+1. ✅ Add comprehensive debug logging
+2. ✅ Add robust IP range fallback scanning
+3. ✅ Add debug UI to show logs
+4. ✅ Add troubleshooting instructions for users
+
+**Files Being Updated:**
+- lib/services/discovery_service.dart (logging + fallback)
+- lib/screens/connect_gateway_screen.dart (debug UI)
+- lib/screens/settings_screen.dart (troubleshooting tips)
+
+**User Workaround (Until Fixed):**
+- Use manual entry: `http://<gateway-ip>:18789`
+- Make sure gateway is running
+- Make sure mDNS is enabled: `openclaw config set discovery.mdns.mode on`
+- Make sure devices are on same WiFi network
 

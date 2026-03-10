@@ -7,6 +7,7 @@ import '../models/gateway_status.dart';
 import '../widgets/connection_status_card.dart';
 import '../widgets/connection_status_icon.dart';
 import 'settings_screen.dart';
+import 'connect_gateway_screen.dart';
 import 'logs_screen.dart';
 import 'chat_screen.dart';
 import 'termux_screen.dart';
@@ -499,11 +500,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 16),
             
-            // Option 2: Connect to Remote
+            // Option 2: Connect to Remote - Single entry point
             Card(
               elevation: 4,
               child: InkWell(
-                onTap: () => _showConnectRemoteDialog(context),
+                onTap: () => _navigateToConnectGateway(context),
                 borderRadius: BorderRadius.circular(16),
                 child: Padding(
                   padding: const EdgeInsets.all(20),
@@ -581,17 +582,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 24),
             
-            // Quick actions
+            // Quick actions - Single Connect button
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                ElevatedButton.icon(
+                  onPressed: () => _navigateToConnectGateway(context),
+                  icon: const Icon(Icons.wifi_find),
+                  label: const Text('Connect to Gateway'),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(200, 48),
                   ),
-                  icon: const Icon(Icons.settings),
-                  label: const Text('Manual Setup'),
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
@@ -686,7 +687,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Show dialog for connecting to remote gateway
+  /// Navigate to unified Connect Gateway screen
+  void _navigateToConnectGateway(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ConnectGatewayScreen(
+          onConnected: () {
+            _loadConfig();
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Show dialog for connecting to remote gateway - Simplified to single entry point
   void _showConnectRemoteDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -695,7 +710,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Icon(Icons.cloud, color: Colors.blue),
             SizedBox(width: 8),
-            Text('Connect to Remote Gateway'),
+            Text('Connect to Gateway'),
           ],
         ),
         content: SingleChildScrollView(
@@ -708,44 +723,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              const Text('Connection Options:'),
-              const SizedBox(height: 8),
               _buildConnectionOption(
-                'Local Network',
-                'Auto-discover gateways on your WiFi',
-                Icons.wifi,
+                'Find Gateway',
+                'Auto-discover via LAN or Tailscale',
+                Icons.wifi_find,
                 () {
                   Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              _buildConnectionOption(
-                'Manual Entry',
-                'Enter gateway IP and port manually',
-                Icons.edit,
-                () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              _buildConnectionOption(
-                'Tailscale',
-                'Connect via Tailscale private network',
-                Icons.security,
-                () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                  );
+                  _navigateToConnectGateway(context);
                 },
               ),
               const SizedBox(height: 16),
@@ -766,7 +750,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Auto-discovery will scan your network for available gateways.',
+                      'Auto-discovery will scan your network and Tailscale for available gateways.',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
