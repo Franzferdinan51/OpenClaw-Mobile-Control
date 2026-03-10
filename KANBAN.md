@@ -229,7 +229,12 @@ This Kanban is the **master todo list** for OpenClaw Mobile app (DuckBot). All t
 
 ## ✅ DONE (Completed Tasks)
 
-### v2.0 - March 9, 2026
+### v2.0 - Released 2026-03-10 🎉
+
+**Release Date:** March 10, 2026  
+**APK Size:** 72.8MB  
+**Package:** com.duckbot.go  
+**App Name:** DuckBot Go
 
 #### Core Features
 - [x] (v2.0) Dashboard - Live gateway, agents, nodes status
@@ -319,14 +324,14 @@ This Kanban is the **master todo list** for OpenClaw Mobile app (DuckBot). All t
 
 #### Release Statistics
 
-| Metric | Count |
-|--------|-------|
-| **Total Features Implemented** | 30+ |
-| **Total Bugs Fixed** | 23+ |
-| **Lines of Code** | 10,000+ |
-| **Agent Tasks Completed** | 24 |
-| **Research Reports Analyzed** | 8 |
-| **Features Analyzed** | 125+ |
+## v2.0 Release Stats (2026-03-10)
+- Features Implemented: 30+
+- Bugs Fixed: 23+
+- Lines of Code: 10,000+
+- Agent Tasks: 25 (24 completed, 1 timed out)
+- APK Size: 72.8MB
+- Package: com.duckbot.go
+- App Name: DuckBot Go
 
 ---
 
@@ -335,6 +340,8 @@ This Kanban is the **master todo list** for OpenClaw Mobile app (DuckBot). All t
 ### v2.1 (Next Sprint - Q2 2026)
 
 **Focus:** Critical bug fixes + P0/P1 features
+
+> ⚠️ **Note:** Node Approval UI was partially implemented but timed out. Files created - finish in v2.1.
 
 | Category | Tasks | Effort |
 |----------|-------|--------|
@@ -574,3 +581,35 @@ These P0/P1 tasks provide immediate value with minimal effort:
 **Last Updated:** March 10, 2026 00:30 EST  
 **Maintained By:** DuckBot Development Team  
 **Next Review:** Weekly sprint planning
+---
+
+## 🐛 BUGS FOUND IN TESTING (2026-03-10 01:34 AM)
+
+### P0 - Critical (Fix Immediately)
+
+| Bug | Description | Status |
+|-----|-------------|--------|
+| **BUG-DISCOVERY-001** | Auto-discovery doesn't find OpenClaw instances on network | ⏳ To Fix |
+| **BUG-DISCOVERY-002** | Gateway connection shows nothing to accept | ⏳ To Fix |
+| **BUG-TAILSCALE-001** | Tailscale doesn't find gateways | ⏳ To Fix |
+| **BUG-LAN-001** | Regular LAN discovery doesn't work | ⏳ To Fix |
+
+**Reported by:** Duckets  
+**Date:** 2026-03-10 01:34 AM  
+**Priority:** P0 - Critical (blocking connection)
+
+**Notes:**
+- User tested connection on both phones
+- No gateway instances found via auto-discovery
+- No connection prompts appeared
+- Tailscale discovery not working
+- LAN discovery not working
+- Manual entry may be required as workaround
+
+**To Fix:**
+1. Debug discovery service
+2. Check mDNS implementation
+3. Verify Tailscale integration
+4. Test on local network
+5. Add connection prompts/notifications
+
