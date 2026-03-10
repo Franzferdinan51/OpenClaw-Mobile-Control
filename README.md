@@ -23,16 +23,54 @@ flutter build apk --release
 ```
 
 ### **Install on Phone**
-```bash
-# USB
-adb install DuckBot-Go.apk
 
-# Or transfer APK to phone and install directly
+**Method 1: USB (Developer)**
+```bash
+adb install DuckBot-Go.apk
 ```
 
+**Method 2: Direct Install**
+1. Transfer APK to phone
+2. Open file manager
+3. Tap APK file
+4. Allow "Install from unknown sources"
+5. Install
+
+**Method 3: Local Installation (On-Device)**
+1. Install Termux from F-Droid (NOT Play Store)
+2. Open DuckBot Go app
+3. Settings → App → "Install OpenClaw Locally"
+4. Follow setup wizard (10-15 minutes)
+5. Connect to localhost:18789
+
 ### **Connect to Gateway**
+
+**IMPORTANT: Gateway must be configured first!**
+
+```bash
+# On your gateway host (Mac mini, server, etc.):
+openclaw config set gateway.bind lan
+openclaw config set discovery.mdns.mode full
+openclaw gateway restart
+
+# Wait 10 seconds, then test:
+curl http://YOUR_IP:18789/health
+# Should return: {"ok":true,"status":"live"}
+```
+
+**Method 1: Auto-Discovery (Recommended)**
 1. Open app
-2. Auto-discovers gateway on local network (mDNS)
+2. Settings → App → "Connect to Gateway"
+3. Auto tab (scans all 254 IPs + Tailscale)
+4. Wait 10-30 seconds
+5. Tap your gateway to connect
+
+**Method 2: Manual Entry**
+1. Open app
+2. Settings → App → "Connect to Gateway"
+3. Manual tab
+4. Enter: `http://YOUR_IP:18789`
+5. Connect
 3. Or manually enter: `http://<your-gateway-ip>:18789`
 4. Enter gateway token (from `~/.openclaw/config`)
 5. Start using!
@@ -546,3 +584,78 @@ MIT License - Use freely, commercially or personally. Attribution appreciated bu
 
 **Built with ❤️ by DuckBot 🦆**  
 **Version:** 2.0.0 | **Last Updated:** March 10, 2026
+---
+
+## 🛠️ **TROUBLESHOOTING**
+
+### **"No route to host" Error**
+**Cause:** Gateway is bound to localhost only  
+**Fix:**
+```bash
+openclaw config set gateway.bind lan
+openclaw gateway restart
+```
+
+### **"Connection refused" Error**
+**Cause:** Gateway not running or wrong port  
+**Fix:**
+```bash
+openclaw status
+# Should show gateway running on port 18789
+```
+
+### **"mDNS found 0 gateways"**
+**Cause:** mDNS not working on your network  
+**Fix:** Use manual entry or wait for network scan (scans all 254 IPs)
+
+### **Auto-Discovery Takes Too Long**
+**Normal:** 10-30 seconds to scan all networks  
+**If >60 seconds:** Check network connectivity, try manual entry
+
+### **Local Installer Fails**
+**Requirements:**
+- Termux from F-Droid (NOT Play Store)
+- ~500MB free space
+- Internet connection
+- No root required
+
+**Fix:**
+1. Uninstall Termux if from Play Store
+2. Install Termux from F-Droid: https://f-droid.org/packages/com.termux/
+3. Try installer again
+
+### **Termux Setup Fails**
+**Common Issues:**
+- Storage permission denied → Grant in Android settings
+- Network error → Check internet connection
+- Out of space → Free up 500MB
+
+---
+
+## 📚 **ADDITIONAL DOCUMENTATION**
+
+- `GATEWAY_DISCOVERY_FIX.md` - Discovery implementation details
+- `INSTALLER_FIX_SUMMARY.md` - Local installer technical details
+- `LOCAL_INSTALLER_README.md` - User guide for local installation
+- `TERMUX_INTEGRATION.md` - Termux integration documentation
+- `TROUBLESHOOTING.md` - Complete troubleshooting guide
+
+---
+
+## 🦆 **DuckBot Go v2.1**
+
+**Latest Version:** v2.1 (2026-03-10)  
+**APK Size:** 72.3MB  
+**Build Time:** ~27 seconds  
+**Status:** ✅ Production Ready
+
+**What's New in v2.1:**
+- ✅ Auto-discovery scans ALL 254 IPs (was 46)
+- ✅ Tailscale network scanning (100.64.x.x)
+- ✅ Parallel scanning (25 IPs/batch, 500ms timeout)
+- ✅ Local installer (non-root via Termux)
+- ✅ Termux integration (proot-distro Ubuntu)
+- ✅ Enhanced error messages
+- ✅ Progress tracking UI
+
+**GitHub:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control
