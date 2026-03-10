@@ -60,7 +60,7 @@ class VoiceService {
             
             // Handle continuous mode restart
             if (_continuousMode && _lastRecognized.isEmpty) {
-              _startListening();
+              startListening();
             }
           }
         },
@@ -142,7 +142,6 @@ class VoiceService {
       pauseFor: const Duration(seconds: 3),
       localeId: localeId ?? _locales.first,
       listenMode: stt.ListenMode.confirmation,
-      cancelOnError: false,
       partialResults: true,
     );
   }
@@ -164,14 +163,6 @@ class VoiceService {
   }) async {
     _continuousMode = true;
     await startListening();
-    
-    // Restart listening if it stops
-    _speech.setPartialResultHandler((result) {
-      if (result.recognizedWords.toLowerCase().contains(_wakeWord)) {
-        // Wake word detected - could trigger visual feedback
-        debugPrint('Wake word detected: ${result.recognizedWords}');
-      }
-    });
   }
 
   /// Speak the given text

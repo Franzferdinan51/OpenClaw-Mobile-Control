@@ -35,6 +35,13 @@ class IntentResult {
   });
 
   bool get isError => error != null;
+  
+  // Aliases for MCP server compatibility
+  bool get success => !isError;
+  String get intent => action;
+  String get apiEndpoint => endpoint;
+  String get apiMethod => method;
+  List<String> get suggestions => suggestion != null ? [suggestion!] : [];
 
   Map<String, dynamic> toJson() => {
     'action': action,

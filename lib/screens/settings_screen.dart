@@ -3,11 +3,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_status.dart';
 import '../services/discovery_service.dart';
 import '../services/tailscale_service.dart';
+import '../services/app_settings_service.dart';
+import '../services/connection_monitor_service.dart';
+import '../services/gateway_service.dart';
+import '../widgets/connection_status_icon.dart';
+import 'node_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Function()? onGatewayChanged;
+  final Function()? onModeChanged;
 
-  const SettingsScreen({super.key, this.onGatewayChanged});
+  const SettingsScreen({super.key, this.onGatewayChanged, this.onModeChanged});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -18,6 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   late TabController _tabController;
   final DiscoveryService _discoveryService = DiscoveryService();
   final TailscaleService _tailscaleService = TailscaleService();
+  final AppSettingsService _appSettings = AppSettingsService();
 
   // Manual entry controllers
   final _formKey = GlobalKey<FormState>();
@@ -30,6 +37,8 @@ class _SettingsScreenState extends State<SettingsScreen>
   final _tailscaleNameController = TextEditingController();
   bool _tailscaleRunning = false;
   List<GatewayConnection> _tailscaleGateways = [];
+  List<GatewayConnection> _discoveredTailscaleGateways = [];
+  bool _discovering = false;
 
   // UI state
   bool _saving = false;
@@ -43,15 +52,25 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this); // Added Tailscale tab
+    _tabController = TabController(length: 6, vsync: this); // App, Node, Discover, Manual, History, Tailscale
     _urlController = TextEditingController();
     _portController = TextEditingController(text: '18789');
     _tokenController = TextEditingController();
+
+    // Initialize app settings service first
+    _initializeAppSettings();
 
     _loadSettings();
     _loadHistory();
     _checkTailscale();
     _startDiscovery();
+  }
+
+  Future<void> _initializeAppSettings() async {
+    await AppSettingsService.initialize();
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -90,6 +109,62 @@ class _SettingsScreenState extends State<SettingsScreen>
         _tailscaleRunning = isRunning;
         _tailscaleGateways = gateways;
       });
+    }
+  }
+
+  Future<void> _discoverTailscaleGateways() async {
+    if (!_tailscaleRunning) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tailscale is not running. Please connect to Tailscale first.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _discovering = true;
+      _discoveredTailscaleGateways = [];
+    });
+
+    try {
+      final discovered = await _tailscaleService.discoverTailscaleGateways();
+
+      if (mounted) {
+        setState(() {
+          _discoveredTailscaleGateways = discovered;
+          _discovering = false;
+        });
+
+        if (discovered.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No Tailscale gateways found. Try manual entry.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Found ${discovered.length} Tailscale gateway(s)!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _discovering = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Discovery error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -236,46 +311,73 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _addTailscaleGateway() async {
-    if (_tailscaleController.text.isEmpty) return;
-
-    final gateway = TailscaleService.parseTailscaleUrl(
-      _tailscaleController.text,
-      name: _tailscaleNameController.text.isNotEmpty 
-          ? _tailscaleNameController.text 
-          : null,
-    );
-
-    if (gateway == null) {
+    if (_tailscaleController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Invalid Tailscale URL'),
-          backgroundColor: Colors.red,
+          content: Text('Please enter a Tailscale URL'),
+          backgroundColor: Colors.orange,
         ),
       );
       return;
     }
 
-    // Test connection
-    final success = await _discoveryService.testConnection(gateway);
-    if (!success) {
+    setState(() {
+      _saving = true;
+    });
+
+    try {
+      final gateway = TailscaleService.parseTailscaleUrl(
+        _tailscaleController.text,
+        name: _tailscaleNameController.text.isNotEmpty
+            ? _tailscaleNameController.text
+            : null,
+      );
+
+      if (gateway == null) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid Tailscale URL. Must be 100.x.x.x or *.ts.net'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Test connection
+      final success = await _discoveryService.testConnection(gateway);
+      if (!success) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not connect to Tailscale gateway'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Save Tailscale gateway
+      await _tailscaleService.saveTailscaleGateway(gateway);
+      await _checkTailscale();
+
+      // Clear controllers
+      _tailscaleController.clear();
+      _tailscaleNameController.clear();
+
+      setState(() => _saving = false);
+
+      // Connect
+      await _connectToGateway(gateway);
+    } catch (e) {
+      setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not connect to Tailscale gateway'),
+        SnackBar(
+          content: Text('Error: $e'),
           backgroundColor: Colors.red,
         ),
       );
-      return;
     }
-
-    // Save Tailscale gateway
-    await _tailscaleService.saveTailscaleGateway(gateway);
-    await _checkTailscale();
-
-    // Connect
-    await _connectToGateway(gateway);
-
-    _tailscaleController.clear();
-    _tailscaleNameController.clear();
   }
 
   Future<void> _removeTailscaleGateway(String url) async {
@@ -299,11 +401,13 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Gateway Settings'),
+        title: const Text('Settings'),
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
           tabs: const [
+            Tab(icon: Icon(Icons.settings), text: 'App'),
+            Tab(icon: Icon(Icons.router), text: 'Node'),
             Tab(icon: Icon(Icons.wifi_find), text: 'Discover'),
             Tab(icon: Icon(Icons.edit), text: 'Manual'),
             Tab(icon: Icon(Icons.history), text: 'History'),
@@ -314,6 +418,8 @@ class _SettingsScreenState extends State<SettingsScreen>
       body: TabBarView(
         controller: _tabController,
         children: [
+          _buildAppSettingsTab(),
+          const NodeSettingsScreen(),
           _buildDiscoverTab(),
           _buildManualTab(),
           _buildHistoryTab(),
@@ -678,44 +784,115 @@ class _SettingsScreenState extends State<SettingsScreen>
           ),
           const SizedBox(height: 24),
 
-          // Add Tailscale gateway
-          Text(
-            'Add Tailscale Gateway',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Enter a Tailscale URL (e.g., https://node.tailnet.ts.net or http://100.x.x.x:18789)',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 16),
-
-          TextField(
-            controller: _tailscaleController,
-            decoration: const InputDecoration(
-              labelText: 'Tailscale URL',
-              hintText: 'https://node.tailnet.ts.net',
-              prefixIcon: Icon(Icons.link),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          TextField(
-            controller: _tailscaleNameController,
-            decoration: const InputDecoration(
-              labelText: 'Name (optional)',
-              hintText: 'Home Server',
-              prefixIcon: Icon(Icons.label),
-            ),
-          ),
-          const SizedBox(height: 16),
-
+          // Discover Gateways Button
           ElevatedButton.icon(
-            onPressed: _addTailscaleGateway,
-            icon: const Icon(Icons.add),
-            label: const Text('Add & Connect'),
+            onPressed: _discovering ? null : _discoverTailscaleGateways,
+            icon: _discovering
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.wifi_find),
+            label: Text(_discovering ? 'Discovering...' : 'Discover Tailscale Gateways'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Add Tailscale gateway manually
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.edit, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Manual Entry',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Enter Tailscale IP or URL manually',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+
+                  TextField(
+                    controller: _tailscaleController,
+                    decoration: const InputDecoration(
+                      labelText: 'Tailscale URL',
+                      hintText: 'http://100.x.x.x:18789',
+                      prefixIcon: Icon(Icons.link),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextField(
+                    controller: _tailscaleNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Name (optional)',
+                      hintText: 'Home Server',
+                      prefixIcon: Icon(Icons.label),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  ElevatedButton.icon(
+                    onPressed: _saving ? null : _addTailscaleGateway,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add),
+                    label: Text(_saving ? 'Connecting...' : 'Add & Connect'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 32),
+
+          // Discovered Tailscale gateways
+          if (_discoveredTailscaleGateways.isNotEmpty) ...[
+            Text(
+              'Discovered Gateways',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: Colors.green,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...(_discoveredTailscaleGateways.map((gateway) => Card(
+              color: Colors.green.withOpacity(0.05),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.green,
+                  child: Icon(Icons.wifi, color: Colors.white),
+                ),
+                title: Text(gateway.displayName),
+                subtitle: Text(gateway.url),
+                trailing: ElevatedButton(
+                  onPressed: () => _connectToGateway(gateway),
+                  child: const Text('Connect'),
+                ),
+              ),
+            ))),
+            const SizedBox(height: 24),
+          ],
 
           // Saved Tailscale gateways
           if (_tailscaleGateways.isNotEmpty) ...[
@@ -753,6 +930,505 @@ class _SettingsScreenState extends State<SettingsScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildAppSettingsTab() {
+    return AnimatedBuilder(
+      animation: _appSettings,
+      builder: (context, child) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Connection Status Section
+              _buildConnectionStatusSection(),
+              const SizedBox(height: 16),
+              
+              // App Mode Section
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.layers, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            'App Mode',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Choose your interface complexity level',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 16),
+                      SegmentedButton<AppMode>(
+                        segments: [
+                          ButtonSegment(
+                            value: AppMode.basic,
+                            label: const Text('Basic'),
+                            icon: Icon(Icons.star, color: _appSettings.currentMode == AppMode.basic ? Colors.green : null),
+                            tooltip: 'Simple interface, essential features only',
+                          ),
+                          ButtonSegment(
+                            value: AppMode.powerUser,
+                            label: const Text('Power User'),
+                            icon: Icon(Icons.bolt, color: _appSettings.currentMode == AppMode.powerUser ? Colors.blue : null),
+                            tooltip: 'Full feature set, organized cleanly',
+                          ),
+                          ButtonSegment(
+                            value: AppMode.developer,
+                            label: const Text('Developer'),
+                            icon: Icon(Icons.build, color: _appSettings.currentMode == AppMode.developer ? Colors.purple : null),
+                            tooltip: 'All options, technical details, API access',
+                          ),
+                        ],
+                        selected: {_appSettings.currentMode},
+                        onSelectionChanged: (Set<AppMode> selected) async {
+                          final newMode = selected.first;
+                          await _appSettings.setAppMode(newMode);
+                          // Notify parent to rebuild navigation
+                          widget.onModeChanged?.call();
+                          widget.onGatewayChanged?.call();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Mode changed to ${newMode.name}'),
+                                backgroundColor: _getModeColor(newMode),
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          }
+                        },
+                        multiSelectionEnabled: false,
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _getModeColor(_appSettings.currentMode).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _getModeColor(_appSettings.currentMode)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _getModeIcon(_appSettings.currentMode),
+                              color: _getModeColor(_appSettings.currentMode),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _getModeDescription(_appSettings.currentMode),
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Notifications
+              Card(
+                child: SwitchListTile(
+                  title: const Text('Notifications'),
+                  subtitle: const Text('Enable push notifications'),
+                  value: _appSettings.notificationsEnabled,
+                  onChanged: (value) async {
+                    await _appSettings.setNotificationsEnabled(value);
+                  },
+                  secondary: const Icon(Icons.notifications),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Haptic Feedback
+              Card(
+                child: SwitchListTile(
+                  title: const Text('Haptic Feedback'),
+                  subtitle: const Text('Vibrate on button presses'),
+                  value: _appSettings.hapticFeedback,
+                  onChanged: (value) async {
+                    await _appSettings.setHapticFeedback(value);
+                  },
+                  secondary: const Icon(Icons.vibration),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Theme
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.palette),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Theme',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _appSettings.theme,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'system', child: Text('System Default')),
+                          DropdownMenuItem(value: 'light', child: Text('Light')),
+                          DropdownMenuItem(value: 'dark', child: Text('Dark')),
+                        ],
+                        onChanged: (value) async {
+                          if (value != null) {
+                            await _appSettings.setTheme(value);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Auto-Refresh Interval
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.refresh),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Auto-Refresh Interval',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Slider(
+                        value: _appSettings.autoRefreshInterval.toDouble(),
+                        min: 15,
+                        max: 300,
+                        divisions: 19,
+                        label: '${_appSettings.autoRefreshInterval}s',
+                        onChanged: (value) async {
+                          await _appSettings.setAutoRefreshInterval(value.round());
+                        },
+                      ),
+                      Text(
+                        'Dashboard and logs refresh every ${_appSettings.autoRefreshInterval} seconds',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Developer Options (only visible in developer mode)
+              if (_appSettings.isDeveloperMode) ...[
+                Card(
+                  color: Colors.purple.withOpacity(0.1),
+                  child: SwitchListTile(
+                    title: const Text('Debug Logging'),
+                    subtitle: const Text('Enable verbose logging for debugging'),
+                    value: _appSettings.debugLogging,
+                    onChanged: (value) async {
+                      await _appSettings.setDebugLogging(value);
+                    },
+                    secondary: const Icon(Icons.bug_report),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 32),
+
+              // App Info
+              Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.android,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'OpenClaw Mobile',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Version 2.0.1',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Built with ❤️ by DuckBot 🦆',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  IconData _getModeIcon(AppMode mode) {
+    switch (mode) {
+      case AppMode.basic:
+        return Icons.star;
+      case AppMode.powerUser:
+        return Icons.bolt;
+      case AppMode.developer:
+        return Icons.build;
+    }
+  }
+
+  Color _getModeColor(AppMode mode) {
+    switch (mode) {
+      case AppMode.basic:
+        return Colors.green;
+      case AppMode.powerUser:
+        return Colors.blue;
+      case AppMode.developer:
+        return Colors.purple;
+    }
+  }
+
+  String _getModeDescription(AppMode mode) {
+    switch (mode) {
+      case AppMode.basic:
+        return 'Basic Mode: Simple interface with essential features. Perfect for quick monitoring and basic control. Shows 4 tabs: Home, Chat, Actions, Settings.';
+      case AppMode.powerUser:
+        return 'Power User Mode: Full feature set with organized complexity. For daily users who want complete control. Shows 6 tabs with hub screens.';
+      case AppMode.developer:
+        return 'Developer Mode: All options, technical details, and API access. For developers and power users who need debug tools. Shows 7 tabs including Dev Tools.';
+    }
+  }
+
+  Widget _buildConnectionStatusSection() {
+    return AnimatedBuilder(
+      animation: connectionMonitor,
+      builder: (context, child) {
+        final state = connectionMonitor.state;
+        
+        return Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: _getConnectionStatusColor(state.status).withOpacity(0.5),
+              width: 2,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Icon(
+                      Icons.router,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Gateway Connection',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    // Status dot
+                    ConnectionStatusDot(showLabel: true),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                
+                // Gateway URL
+                if (state.gatewayUrl != null)
+                  _buildConnectionDetail(
+                    context,
+                    'Gateway URL',
+                    state.gatewayUrl!,
+                    Icons.link,
+                  ),
+                
+                // Version
+                if (state.gatewayInfo != null)
+                  _buildConnectionDetail(
+                    context,
+                    'Version',
+                    state.gatewayInfo!.version,
+                    Icons.info_outline,
+                  ),
+                
+                // Latency
+                if (state.isConnected && state.lastPing != null)
+                  _buildConnectionDetail(
+                    context,
+                    'Latency',
+                    '${state.latencyMs}ms',
+                    Icons.speed,
+                  ),
+                
+                // Error message
+                if (state.errorMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.red, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              state.errorMessage!,
+                              style: const TextStyle(color: Colors.red, fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                
+                const SizedBox(height: 16),
+                
+                // Actions
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final success = await connectionMonitor.testConnection();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  success
+                                      ? '✓ Connection successful!'
+                                      : '✗ Connection failed',
+                                ),
+                                backgroundColor: success ? Colors.green : Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.network_check, size: 18),
+                        label: const Text('Test Connection'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          // Disconnect and go to discovery
+                          connectionMonitor.disconnect();
+                          _tabController.animateTo(1); // Go to Discover tab
+                        },
+                        icon: const Icon(Icons.logout, size: 18),
+                        label: const Text('Disconnect'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      // Go to discovery to change gateway
+                      _tabController.animateTo(1);
+                    },
+                    icon: const Icon(Icons.swap_horiz),
+                    label: const Text('Change Gateway'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildConnectionDetail(
+    BuildContext context,
+    String label,
+    String value,
+    IconData icon,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$label:',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getConnectionStatusColor(ConnectionStatus status) {
+    switch (status) {
+      case ConnectionStatus.connected:
+        return Colors.green;
+      case ConnectionStatus.disconnected:
+        return Colors.red;
+      case ConnectionStatus.connecting:
+        return Colors.orange;
+      case ConnectionStatus.error:
+        return Colors.red.shade800;
+    }
   }
 
   String _formatDate(DateTime date) {

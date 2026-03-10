@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import '../services/gateway_service.dart';
+import '../services/connection_monitor_service.dart';
 import '../models/gateway_status.dart';
+import '../widgets/connection_status_card.dart';
+import '../widgets/connection_status_icon.dart';
+import 'settings_screen.dart';
+import 'logs_screen.dart';
+import 'chat_screen.dart';
+import 'termux_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -17,11 +25,71 @@ class _DashboardScreenState extends State<DashboardScreen> {
   GatewayStatus? _status;
   bool _loading = true;
   String? _error;
+  DateTime? _lastRefresh;
+  Timer? _autoRefreshTimer;
+  String? _gatewayName;
+  ConnectionStatus _lastConnectionStatus = ConnectionStatus.disconnected;
+  bool _hasShownLostNotification = false;
 
   @override
   void initState() {
     super.initState();
     _loadConfig();
+    // Listen for connection status changes
+    connectionMonitor.addListener(_onConnectionStatusChanged);
+    // Auto-refresh every 30 seconds
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshStatus());
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    connectionMonitor.removeListener(_onConnectionStatusChanged);
+    super.dispose();
+  }
+
+  void _onConnectionStatusChanged() {
+    final state = connectionMonitor.state;
+    
+    // Show SnackBar when connection is lost (only once per disconnection)
+    if (state.isDisconnected || state.hasError) {
+      if (_lastConnectionStatus == ConnectionStatus.connected && !_hasShownLostNotification) {
+        _hasShownLostNotification = true;
+        _showConnectionLostNotification(state.errorMessage);
+      }
+    } else if (state.isConnected) {
+      // Reset notification flag when reconnected
+      _hasShownLostNotification = false;
+    }
+    
+    _lastConnectionStatus = state.status;
+  }
+
+  void _showConnectionLostNotification(String? error) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.wifi_off, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Gateway Connection Lost${error != null ? ': $error' : ''}',
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade800,
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Reconnect',
+          textColor: Colors.white,
+          onPressed: () => connectionMonitor.reconnect(),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadConfig() async {
@@ -31,6 +99,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _service = widget.gatewayService;
         _loading = true;
       });
+      
+      // Start connection monitoring
+      connectionMonitor.startMonitoring(
+        widget.gatewayService!,
+        gatewayName: _gatewayName,
+      );
+      
       await _refreshStatus();
       return;
     }
@@ -39,11 +114,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final prefs = await SharedPreferences.getInstance();
     final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
     final token = prefs.getString('gateway_token');
+    _gatewayName = prefs.getString('gateway_name');
 
     setState(() {
       _service = GatewayService(baseUrl: gatewayUrl, token: token);
       _loading = true;
     });
+    
+    // Start connection monitoring
+    connectionMonitor.startMonitoring(
+      _service!,
+      gatewayName: _gatewayName,
+    );
 
     await _refreshStatus();
   }
@@ -61,6 +143,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _status = status;
         _loading = false;
+        _lastRefresh = DateTime.now();
       });
     } catch (e) {
       setState(() {
@@ -70,19 +153,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  String _getTimeAgo(DateTime dateTime) {
+    final diff = DateTime.now().difference(dateTime);
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    return '${diff.inHours}h ago';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('OpenClaw Mobile'),
         actions: [
+          // Connection status icon
+          const ConnectionStatusIcon(),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshStatus,
           ),
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.pushNamed(context, '/settings'),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsScreen()),
+            ),
           ),
         ],
       ),
@@ -95,11 +190,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
+                      // Connection Status Card (prominent at top)
+                      ConnectionStatusCard(
+                        onRetry: _refreshStatus,
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Last refresh indicator
+                      if (_lastRefresh != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Updated ${_getTimeAgo(_lastRefresh!)}',
+                                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      
+                      // Quick Stats Row
+                      _buildQuickStatsRow(),
+                      const SizedBox(height: 16),
+                      
+                      // System Health
+                      _buildSystemHealthCard(),
+                      const SizedBox(height: 16),
+                      
                       _buildGatewayCard(),
                       const SizedBox(height: 16),
                       _buildAgentsCard(),
                       const SizedBox(height: 16),
                       _buildNodesCard(),
+                      const SizedBox(height: 16),
+                      
+                      // Quick Actions
+                      _buildQuickActionsCard(),
                     ],
                   ),
                 ),
@@ -456,7 +586,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 OutlinedButton.icon(
-                  onPressed: () => Navigator.pushNamed(context, '/settings'),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  ),
                   icon: const Icon(Icons.settings),
                   label: const Text('Manual Setup'),
                 ),
@@ -540,7 +673,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onPressed: () {
               Navigator.pop(context);
               // Navigate to Termux screen to start installation
-              Navigator.pushNamed(context, '/termux');
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const TermuxScreen()),
+              );
             },
             icon: const Icon(Icons.download),
             label: const Text('Start Installation'),
@@ -580,7 +716,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Icons.wifi,
                 () {
                   Navigator.pop(context);
-                  Navigator.pushNamed(context, '/settings');
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  );
                 },
               ),
               const SizedBox(height: 8),
@@ -590,7 +729,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Icons.edit,
                 () {
                   Navigator.pop(context);
-                  Navigator.pushNamed(context, '/settings');
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  );
                 },
               ),
               const SizedBox(height: 8),
@@ -600,7 +742,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Icons.security,
                 () {
                   Navigator.pop(context);
-                  Navigator.pushNamed(context, '/settings');
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  );
                 },
               ),
               const SizedBox(height: 16),
@@ -638,7 +783,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              Navigator.pushNamed(context, '/settings');
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
             },
             icon: const Icon(Icons.search),
             label: const Text('Find Gateways'),
@@ -716,6 +864,188 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const Icon(Icons.chevron_right),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildQuickStatsRow() {
+    final agentCount = _status?.agents?.length ?? 0;
+    final nodeCount = _status?.nodes?.length ?? 0;
+    final isPaused = _status?.isPaused ?? false;
+    
+    return Row(
+      children: [
+        Expanded(
+          child: _buildQuickStatCard(
+            'Agents',
+            '$agentCount',
+            Icons.people,
+            agentCount > 0 ? Colors.green : Colors.grey,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildQuickStatCard(
+            'Nodes',
+            '$nodeCount',
+            Icons.devices,
+            nodeCount > 0 ? Colors.blue : Colors.grey,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildQuickStatCard(
+            'Status',
+            isPaused ? 'Paused' : 'Active',
+            Icons.play_circle,
+            isPaused ? Colors.orange : Colors.green,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuickStatCard(String label, String value, IconData icon, Color color) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSystemHealthCard() {
+    final cpuPercent = _status?.cpuPercent ?? 0.0;
+    final memoryPercent = _status?.memoryTotal != null && _status!.memoryTotal! > 0
+        ? (_status!.memoryUsed!.toDouble() / _status!.memoryTotal!.toDouble() * 100.0)
+        : 0.0;
+    
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.health_and_safety, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'System Health',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _buildHealthIndicator('CPU Usage', cpuPercent, Colors.green, Colors.orange, Colors.red),
+            const SizedBox(height: 12),
+            _buildHealthIndicator('Memory', memoryPercent, Colors.green, Colors.orange, Colors.red),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHealthIndicator(String label, double percent, Color good, Color warn, Color error) {
+    final color = percent < 70 ? good : percent < 90 ? warn : error;
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: Theme.of(context).textTheme.labelMedium),
+            Text(
+              '${percent.toStringAsFixed(1)}%',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: percent / 100,
+            backgroundColor: Colors.grey[300],
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+            minHeight: 6,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuickActionsCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.flash_on, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Quick Actions',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildQuickActionButton('Refresh', Icons.refresh, () => _refreshStatus()),
+                _buildQuickActionButton('Settings', Icons.settings, () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                )),
+                _buildQuickActionButton('Logs', Icons.list, () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const LogsScreen()),
+                )),
+                _buildQuickActionButton('Chat', Icons.chat, () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ChatScreen()),
+                )),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActionButton(String label, IconData icon, VoidCallback onPressed) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
     );
   }

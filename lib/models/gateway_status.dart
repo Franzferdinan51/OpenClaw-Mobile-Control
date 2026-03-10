@@ -435,4 +435,24 @@ class GatewayConnection {
     'last_connected': lastConnected?.toIso8601String(),
     'is_online': isOnline,
   };
+
+  GatewayConnection copyWith({
+    String? name,
+    String? url,
+    String? ip,
+    int? port,
+    String? token,
+    DateTime? lastConnected,
+    bool? isOnline,
+  }) {
+    return GatewayConnection(
+      name: name ?? this.name,
+      url: url ?? this.url,
+      ip: ip ?? this.ip,
+      port: port ?? this.port,
+      token: token ?? this.token,
+      lastConnected: lastConnected ?? this.lastConnected,
+      isOnline: isOnline ?? this.isOnline,
+    );
+  }
 }

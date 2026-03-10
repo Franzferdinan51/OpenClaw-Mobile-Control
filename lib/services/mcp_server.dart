@@ -34,7 +34,7 @@ class McpServer {
     IntentParser? intentParser,
     this.port = 8767,
   }) : _gatewayService = gatewayService ?? GatewayService(),
-       _intentParser = intentParser ?? IntentParser(gatewayService: gatewayService);
+       _intentParser = intentParser ?? IntentParser();
 
   bool get isRunning => _isRunning;
   int get serverPort => port;

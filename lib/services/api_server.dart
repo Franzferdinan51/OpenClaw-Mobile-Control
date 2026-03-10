@@ -19,6 +19,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
 /// REST API Server for Agent Control
@@ -28,6 +29,7 @@ class ApiServer {
   final bool localhostOnly;
   
   HttpServer? _server;
+  DateTime? _startTime;
   final Router _router;
   final StreamController<Map<String, dynamic>> _eventController = 
       StreamController<Map<String, dynamic>>.broadcast();
@@ -524,7 +526,7 @@ class ApiServer {
     return _jsonResponse({
       'ok': true,
       'status': 'healthy',
-      'uptime': _server != null ? DateTime.now().difference(_server!.started).inSeconds : 0,
+      'uptime': _startTime != null ? DateTime.now().difference(_startTime!).inSeconds : 0,
       'port': port,
       'timestamp': DateTime.now().toIso8601String(),
     });
@@ -598,11 +600,12 @@ class ApiServer {
     final handler = const shelf.Pipeline()
         .addMiddleware(_corsMiddleware())
         .addMiddleware(_authMiddleware)
-        .addHandler(_router);
+        .addHandler(_router.call);
     
     final address = localhostOnly ? InternetAddress.loopbackIPv4 : InternetAddress.anyIPv4;
     
-    _server = await shelf.serve(handler, address, port);
+    _server = await shelf_io.serve(handler, address, port);
+    _startTime = DateTime.now();
     
     _addLog('info', 'API server started on port $port');
     print('🦆 OpenClaw Mobile API server running at http://${localhostOnly ? "localhost" : "0.0.0.0"}:$port');
@@ -612,6 +615,7 @@ class ApiServer {
   Future<void> stop() async {
     await _server?.close(force: true);
     _server = null;
+    _startTime = null;
     _addLog('info', 'API server stopped');
   }
 

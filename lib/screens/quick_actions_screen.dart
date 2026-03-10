@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import '../services/termux_service.dart';
 import 'termux_screen.dart';
+import 'chat_screen.dart';
 
 class QuickActionsScreen extends StatefulWidget {
-  const QuickActionsScreen({super.key});
+  final bool showAdvanced;
+
+  const QuickActionsScreen({super.key, this.showAdvanced = false});
 
   @override
   State<QuickActionsScreen> createState() => _QuickActionsScreenState();
@@ -247,7 +250,20 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
       return;
     }
 
-    // Default fallback for other actions
+    // Handle specific placeholder actions
+    if (actionName == 'agents_chat') {
+      setState(() {
+        _loadingActions[actionName] = false;
+      });
+      // Navigate to chat screen
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const ChatScreen()),
+      );
+      return;
+    }
+
+    // Default fallback for other actions (placeholder)
     await Future.delayed(const Duration(milliseconds: 500));
 
     if (!mounted) return;
@@ -256,12 +272,55 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
       _loadingActions[actionName] = false;
     });
 
+    // Show a more informative placeholder message
+    _showPlaceholderDialog(actionName);
+  }
+
+  void _showPlaceholderDialog(String actionName) {
+    final actionDescriptions = {
+      'status': 'Check plant/system status - requires connected sensors',
+      'photo': 'Capture photo from camera - requires camera permission',
+      'analyze': 'Analyze plant health using AI - requires photo first',
+      'alerts': 'Configure alert notifications - requires gateway connection',
+      'backup': 'Create system backup - requires storage permission',
+      'restart': 'Restart OpenClaw services - requires Termux',
+      'kanban': 'Open KANBAN board - feature coming soon',
+      'config': 'Edit configuration files - requires Termux',
+      'weather_current': 'Get current weather from weather service',
+      'weather_storm': 'Check for storm alerts - requires weather API',
+      'weather_forecast': 'Get weather forecast - requires weather API',
+      'agents_research': 'Spawn research agent - requires gateway connection',
+      'agents_code': 'Spawn coding agent - requires gateway connection',
+      'connect_gateway': 'Connect to OpenClaw gateway',
+      'guided_setup': 'Run guided setup wizard',
+    };
+
+    final description = actionDescriptions[actionName] ?? 'Feature coming soon!';
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Action: $actionName executed'),
-        backgroundColor: Colors.green,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.info_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(actionName.replaceAll('_', ' ').toUpperCase()),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.blue.shade700,
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+        duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }

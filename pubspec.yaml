@@ -23,6 +23,12 @@ dependencies:
   webkit_inspection_protocol: ^1.2.1  # JavaScript execution
   cron: ^0.6.1  # Cron scheduling
   multicast_dns: ^0.3.2+4  # mDNS/Bonjour discovery
+  # Voice Dependencies
+  speech_to_text: ^7.0.0  # Speech recognition
+  flutter_tts: ^4.0.0  # Text-to-speech
+  # QR Code
+  qr_flutter: ^4.1.0  # QR code generation
+  mobile_scanner: ^4.0.1  # QR code scanning
 
 dev_dependencies:
   flutter_test:

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,7 +6,9 @@ import '../services/gateway_service.dart';
 import '../models/gateway_status.dart';
 
 class ControlScreen extends StatefulWidget {
-  const ControlScreen({super.key});
+  final bool showAdvanced;
+
+  const ControlScreen({super.key, this.showAdvanced = false});
 
   @override
   State<ControlScreen> createState() => _ControlScreenState();
@@ -20,6 +23,7 @@ class _ControlScreenState extends State<ControlScreen> {
   // Hold to pause state
   double _holdProgress = 0.0;
   bool _isHolding = false;
+  Timer? _holdTimer;
 
   @override
   void initState() {
@@ -524,8 +528,24 @@ class _ControlScreenState extends State<ControlScreen> {
                         _isHolding = true;
                         _holdProgress = 0.0;
                       });
+                      // Start timer to increment progress
+                      _holdTimer?.cancel();
+                      _holdTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+                        if (_isHolding && _holdProgress < 1.0) {
+                          setState(() {
+                            _holdProgress += 0.033; // ~3 seconds to complete
+                          });
+                          if (_holdProgress >= 1.0) {
+                            _holdTimer?.cancel();
+                            _pauseAll();
+                          }
+                        } else {
+                          timer.cancel();
+                        }
+                      });
                     },
                     onLongPressEnd: (_) {
+                      _holdTimer?.cancel();
                       if (_holdProgress < 1.0) {
                         setState(() {
                           _isHolding = false;

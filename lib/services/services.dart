@@ -1,31 +1,12 @@
-/// Agent Control API Services
+/// Services export file
 /// 
-/// Export all API-related services for the OpenClaw Mobile App.
+/// Updated to include performance services
 
-/// Services Exports
-/// 
-/// Export all services for the OpenClaw Mobile App.
+library;
 
-// Core Services
-export 'api_server.dart';
-export 'websocket_api.dart';
-export 'intent_parser.dart';
-
-// Automation Services
-export 'webhook_server.dart';
-export 'automation_engine.dart';
-export 'event_bus.dart';
-export 'scripting_engine.dart';
-
-// Integration Services
+export 'app_settings_service.dart';
 export 'gateway_service.dart';
 export 'discovery_service.dart';
-export 'browseros_service.dart';
-export 'mcp_client.dart';
-export 'mcp_server.dart';
-export 'voice_service.dart';
-export 'voice_commands.dart';
-export 'settings_service.dart';
-export 'storage_service.dart';
-export 'termux_service.dart';
-export 'agent_personality_service.dart';
+export 'performance_service.dart';
+export 'network_service.dart';
+export 'node_host_service.dart';

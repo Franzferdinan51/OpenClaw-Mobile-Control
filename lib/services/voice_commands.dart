@@ -1,43 +1,41 @@
 import '../services/gateway_service.dart';
-import '../services/voice_service.dart';
+
+/// Command types for voice commands
+enum CommandType {
+  gatewayStatus,
+  sendMessage,
+  restartGateway,
+  showLogs,
+  growStatus,
+  takePlantPhoto,
+  weather,
+  navigateDashboard,
+  navigateChat,
+  navigateSettings,
+  navigateControl,
+  unknown,
+}
+
+/// Parsed command result
+class CommandResult {
+  final CommandType type;
+  final Map<String, dynamic> params;
+  final String originalCommand;
+  final bool requiresConfirmation;
+
+  CommandResult({
+    required this.type,
+    required this.params,
+    required this.originalCommand,
+    this.requiresConfirmation = false,
+  });
+}
 
 /// Voice command parsing and execution
 class VoiceCommands {
-  final VoiceService _voiceService = VoiceService();
   final GatewayService? gatewayService;
   
   VoiceCommands({this.gatewayService});
-
-  /// Command types
-  enum CommandType {
-    gatewayStatus,
-    sendMessage,
-    restartGateway,
-    showLogs,
-    growStatus,
-    takePlantPhoto,
-    weather,
-    navigateDashboard,
-    navigateChat,
-    navigateSettings,
-    navigateControl,
-    unknown,
-  }
-
-  /// Parsed command result
-  class CommandResult {
-    final CommandType type;
-    final Map<String, dynamic> params;
-    final String originalCommand;
-    final bool requiresConfirmation;
-
-    CommandResult({
-      required this.type,
-      required this.params,
-      required this.originalCommand,
-      this.requiresConfirmation = false,
-    });
-  }
 
   /// Parse a voice command string
   CommandResult parseCommand(String input) {
@@ -261,7 +259,7 @@ class VoiceCommands {
       final status = await gatewayService!.getStatus();
       if (status != null) {
         final online = status.online ? 'online' : 'offline';
-        final agents = status.activeAgents ?? 0;
+        final agents = status.agents?.length ?? 0;
         return 'Gateway is $online. Currently running $agents active agents.';
       }
       return 'Could not get gateway status';
@@ -337,7 +335,6 @@ class VoiceCommands {
     }
     
     // Extract the message part
-    final words = command.split(' ');
     final messageStartIndex = command.indexOf('message');
     if (messageStartIndex != -1) {
       message = command.substring(messageStartIndex + 7).trim();
@@ -367,6 +364,6 @@ class VoiceCommands {
 - "What's the weather" - Get weather information
 - "Go to dashboard" - Navigate to dashboard
 - "Open chat" - Navigate to chat screen
-- "Show settings" - Open settings''';
+- "Show settings" - Navigate to settings''';
   }
 }
