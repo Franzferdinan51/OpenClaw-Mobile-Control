@@ -1,7 +1,7 @@
 name: duckbot_go
-description: DuckBot Go - Mobile companion for DuckBot
+description: DuckBot Go - Mobile companion for DuckBot with inline generative UI
 publish_to: 'none'
-version: 1.0.0+1
+version: 3.0.0+300  # Major release: Inline Generative UI + ACP Agents
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -28,12 +28,22 @@ dependencies:
   flutter_tts: ^4.0.0  # Text-to-speech
   # QR Code
   qr_flutter: ^4.1.0  # QR code generation
-  mobile_scanner: ^4.0.1  # QR code scanning
+  mobile_scanner: ^7.2.0  # QR code scanning
   # Export & Sharing
   pdf: ^3.10.8  # PDF generation
   share_plus: ^7.2.2  # System share sheet
+  flutter_markdown_plus: ^1.0.7  # Markdown rendering (fork of discontinued flutter_markdown)
+  url_launcher: ^6.2.2  # URL launching for links
   # Permissions
   permission_handler: ^11.3.0  # Runtime permissions
+  # Notifications
+  flutter_local_notifications: ^21.0.0  # Local notifications
+  # File picking
+  file_picker: ^8.0.0  # File selection for import
+  # Weather
+  geolocator: ^11.0.0  # Location services for weather
+  # Charts
+  fl_chart: ^1.1.1  # Beautiful charts and graphs
 
 dev_dependencies:
   flutter_test:
@@ -45,6 +55,16 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icons/app_icon.png
+    - assets/images/
+    - assets/animations/
+  # Note: Custom fonts are disabled until actual font files are added.
+  # See assets/fonts/README.md for instructions.
+  # fonts:
+  #   - family: OpenClaw
+  #     fonts:
+  #       - asset: assets/fonts/OpenClaw-Regular.ttf
+  #       - asset: assets/fonts/OpenClaw-Bold.ttf
+  #         weight: 700
 
 flutter_launcher_icons:
   android: "launcher_icon"

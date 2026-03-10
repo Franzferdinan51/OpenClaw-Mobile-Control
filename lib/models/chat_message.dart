@@ -1,3 +1,5 @@
+import 'inline_widget.dart';
+
 /// Chat message model for Boss Chat
 class ChatMessage {
   final String id;
@@ -5,6 +7,10 @@ class ChatMessage {
   final String content;
   final DateTime? timestamp;
   final Map<String, dynamic>? metadata;
+  
+  /// Inline widget data for generative UI
+  /// When present, this widget should be rendered inline in the chat
+  final InlineWidgetData? widget;
 
   ChatMessage({
     required this.id,
@@ -12,9 +18,16 @@ class ChatMessage {
     required this.content,
     this.timestamp,
     this.metadata,
+    this.widget,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    // Parse inline widget if present
+    InlineWidgetData? widget;
+    if (json['widget'] != null) {
+      widget = parseInlineWidget(json['widget'] as Map<String, dynamic>);
+    }
+    
     return ChatMessage(
       id: json['id'] ?? json['messageId'] ?? '',
       role: json['role'] ?? 'user',
@@ -25,6 +38,7 @@ class ChatMessage {
               ? DateTime.tryParse(json['time'].toString())
               : null,
       metadata: json['metadata'],
+      widget: widget,
     );
   }
 
@@ -34,11 +48,15 @@ class ChatMessage {
     'content': content,
     'timestamp': timestamp?.toIso8601String(),
     'metadata': metadata,
+    if (widget != null) 'widget': widget!.toJson(),
   };
 
   bool get isUser => role == 'user' || role == 'human';
   bool get isAssistant => role == 'assistant' || role == 'agent';
   bool get isSystem => role == 'system';
+  
+  /// Whether this message has an inline widget
+  bool get hasWidget => widget != null;
 
   /// Get display role
   String get displayRole {

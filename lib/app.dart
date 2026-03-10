@@ -887,7 +887,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       // Tab 0: Home (Dashboard)
       DashboardScreen(gatewayService: _gatewayService),
       // Tab 1: Chat
-      const ChatScreen(),
+      ChatScreen(gatewayService: _gatewayService),
     ];
     
     // Tab 2: Actions

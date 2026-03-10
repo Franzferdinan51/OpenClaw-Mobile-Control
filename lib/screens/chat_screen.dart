@@ -1,34 +1,93 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/agent_personality.dart';
+import '../models/inline_widget.dart';
 import '../data/agency_agents.dart';
+import '../services/gateway_service.dart';
+import '../services/chat_service.dart';
 import '../services/chat_export_service.dart';
 import '../services/prompt_templates_service.dart';
+import '../services/agent_chart_tool.dart';
 import '../widgets/export_dialog.dart';
+import '../widgets/inline_weather_widget.dart';
+import '../widgets/inline_chart_widget.dart';
+import '../widgets/inline_card_widget.dart';
 import 'agent_library_screen.dart';
 import 'agent_selector_screen.dart';
 import 'agent_detail_screen.dart';
 import 'multi_agent_screen.dart';
 import 'prompt_templates_screen.dart';
 
-/// Simple Message model for chat
-class Message {
+/// Message model for chat UI
+class ChatMsg {
   final String id;
   final String content;
   final bool isUser;
   final DateTime timestamp;
-  final AgentPersonality? agent; // Agent that sent the message (for multi-agent)
+  final AgentPersonality? agent;
+  final bool isError;
+  final bool isSending;
+  
+  /// Weather widget data for inline display
+  final WeatherWidgetData? weatherWidget;
+  final bool showWeatherForecast;
+  final bool isNight;
+  
+  /// Chart widget data for inline display (from agent_chart_tool.dart)
+  final InlineChartData? chartWidget;
+  
+  /// Info card widget data for inline display
+  final InfoCardWidgetData? infoCardWidget;
+  
+  /// Status widget data for inline display
+  final StatusWidgetData? statusWidget;
+  
+  /// Generic inline widget data
+  final InlineWidgetData? inlineWidget;
 
-  Message({
+  ChatMsg({
     required this.id,
     required this.content,
     required this.isUser,
     required this.timestamp,
     this.agent,
+    this.isError = false,
+    this.isSending = false,
+    this.weatherWidget,
+    this.showWeatherForecast = false,
+    this.isNight = false,
+    this.chartWidget,
+    this.infoCardWidget,
+    this.statusWidget,
+    this.inlineWidget,
   });
+  
+  /// Check if this message has a weather widget
+  bool get hasWeatherWidget => weatherWidget != null;
+  
+  /// Check if this message has a chart widget
+  bool get hasChartWidget => chartWidget != null;
+  
+  /// Check if this message has an info card widget
+  bool get hasInfoCardWidget => infoCardWidget != null;
+  
+  /// Check if this message has a status widget
+  bool get hasStatusWidget => statusWidget != null;
+  
+  /// Check if this message has any inline widget
+  bool get hasInlineWidget => 
+      hasWeatherWidget || 
+      hasChartWidget || 
+      hasInfoCardWidget || 
+      hasStatusWidget ||
+      inlineWidget != null;
 }
 
+/// Chat Screen with real gateway communication
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final GatewayService? gatewayService;
+
+  const ChatScreen({super.key, this.gatewayService});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -37,9 +96,20 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final List<Message> _messages = [];
+  final List<ChatMsg> _messages = [];
   
-  // Agent personality state
+  // Chat service
+  ChatService? _chatService;
+  StreamSubscription? _messagesSubscription;
+  StreamSubscription? _statusSubscription;
+  StreamSubscription? _typingSubscription;
+  
+  // UI state
+  bool _isConnected = false;
+  bool _isTyping = false;
+  String _connectionError = '';
+  
+  // Agent state
   AgentPersonality? _activeAgent;
   List<AgentPersonality> _multiAgentTeam = [];
   bool _isMultiAgentMode = false;
@@ -47,8 +117,93 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Add welcome message from assistant
-    _messages.add(Message(
+    _initChatService();
+    _addWelcomeMessage();
+  }
+  
+  void _initChatService() {
+    if (widget.gatewayService != null) {
+      _chatService = ChatService(gatewayService: widget.gatewayService!);
+      
+      // Listen for messages
+      _messagesSubscription = _chatService!.messagesStream.listen((messages) {
+        _syncMessagesFromService(messages);
+      });
+      
+      // Listen for status changes
+      _statusSubscription = _chatService!.statusStream.listen((status) {
+        setState(() {
+          _isConnected = status == ChatStatus.connected;
+          if (status == ChatStatus.error) {
+            _connectionError = 'Connection error';
+          } else {
+            _connectionError = '';
+          }
+        });
+      });
+      
+      // Listen for typing indicator
+      _typingSubscription = _chatService!.typingStream.listen((isTyping) {
+        setState(() {
+          _isTyping = isTyping;
+        });
+      });
+      
+      // Connect to gateway
+      _connectToGateway();
+    }
+  }
+  
+  Future<void> _connectToGateway() async {
+    if (_chatService == null) return;
+    
+    try {
+      await _chatService!.connect();
+      debugPrint('✅ Connected to gateway');
+    } catch (e) {
+      debugPrint('❌ Failed to connect: $e');
+      setState(() {
+        _connectionError = 'Could not connect to gateway: $e';
+      });
+    }
+  }
+  
+  void _syncMessagesFromService(List<ChatMessageUI> serviceMessages) {
+    // Clear and rebuild messages from service
+    _messages.clear();
+    
+    for (final msg in serviceMessages) {
+      _messages.add(ChatMsg(
+        id: msg.id,
+        content: msg.content,
+        isUser: msg.isUser,
+        timestamp: msg.timestamp,
+        isError: msg.status == ChatMessageStatus.error,
+        isSending: msg.status == ChatMessageStatus.sending,
+        agent: msg.agentName != null ? _getAgentByName(msg.agentName!) : null,
+        weatherWidget: msg.weatherWidget,
+        showWeatherForecast: msg.showWeatherForecast,
+        isNight: msg.isNight,
+        chartWidget: msg.chartWidget,
+      ));
+    }
+    
+    setState(() {});
+    _scrollToBottom();
+  }
+  
+  AgentPersonality? _getAgentByName(String name) {
+    try {
+      return AgencyAgentsData.allAgents.firstWhere(
+        (a) => a.name == name,
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  void _addWelcomeMessage() {
+    _messages.add(ChatMsg(
       id: 'welcome',
       content: '👋 Hello! I\'m DuckBot. How can I help you today?\n\n💡 Tip: Type "agent" or tap the agent icon to switch to a specialized agent mode!',
       isUser: false,
@@ -60,6 +215,10 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    _messagesSubscription?.cancel();
+    _statusSubscription?.cancel();
+    _typingSubscription?.cancel();
+    _chatService?.dispose();
     super.dispose();
   }
 
@@ -96,7 +255,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _addSystemMessage(String content) {
     setState(() {
-      _messages.add(Message(
+      _messages.add(ChatMsg(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         content: content,
         isUser: false,
@@ -106,161 +265,75 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  /// Send message to gateway via WebSocket - THIS IS THE FIX
   void _sendMessage() {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    // Add user message
-    final userMessage = Message(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+    // Clear input immediately
+    _messageController.clear();
+
+    // Add user message to UI immediately (optimistic update)
+    final userMessage = ChatMsg(
+      id: 'user_${DateTime.now().millisecondsSinceEpoch}',
       content: text,
       isUser: true,
       timestamp: DateTime.now(),
+      isSending: true,
     );
 
     setState(() {
       _messages.add(userMessage);
-      _messageController.clear();
     });
 
-    // Scroll to bottom
     _scrollToBottom();
 
-    // Generate response based on agent mode
-    _generateResponse(text);
-  }
-
-  void _generateResponse(String userInput) {
-    Future.delayed(const Duration(milliseconds: 800), () {
-      // Prevent setState after widget disposed (memory leak fix)
-      if (!mounted) return;
-      
-      String response;
-      
-      if (_isMultiAgentMode && _multiAgentTeam.isNotEmpty) {
-        response = _generateMultiAgentResponse(userInput);
-      } else if (_activeAgent != null) {
-        response = _generateSingleAgentResponse(_activeAgent!, userInput);
-      } else {
-        response = _generateDefaultResponse(userInput);
-      }
-      
-      setState(() {
-        _messages.add(Message(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          content: response,
-          isUser: false,
-          timestamp: DateTime.now(),
-          agent: _isMultiAgentMode ? null : _activeAgent,
-        ));
-      });
-
-      _scrollToBottom();
-    });
-  }
-
-  String _generateSingleAgentResponse(AgentPersonality agent, String input) {
-    final lowerInput = input.toLowerCase();
-    
-    // Check for deactivation
-    if (lowerInput.contains('deactivate') || lowerInput.contains('stop agent') || lowerInput.contains('exit')) {
-      _deactivateAgent();
-      return '👋 Agent mode deactivated. Back to default!';
-    }
-    
-    // Check for matching phrases
-    for (final entry in agent.examplePhrases.entries) {
-      if (lowerInput.contains(entry.key)) {
-        return '${agent.emoji} ${entry.value}';
-      }
-    }
-
-    // Default response based on division
-    switch (agent.division) {
-      case AgentDivision.engineering:
-        return '${agent.emoji} Ready to work on: "$input"\n\nI\'ll analyze the requirements and provide a technical solution. What\'s your priority?';
-      case AgentDivision.design:
-        return '${agent.emoji} Let\'s create something beautiful for: "$input"\n\nI\'ll focus on the visual and user experience aspects. Any specific style preferences?';
-      case AgentDivision.marketing:
-        return '${agent.emoji} Marketing strategy for: "$input"\n\nI\'ll develop a growth-focused approach. What\'s your target audience?';
-      case AgentDivision.product:
-        return '${agent.emoji} Product focus on: "$input"\n\nI\'ll help prioritize and deliver value. What metrics matter most?';
-      case AgentDivision.projectManagement:
-        return '${agent.emoji} Managing: "$input"\n\nI\'ll keep things on track. What\'s the timeline?';
-      case AgentDivision.testing:
-        return '${agent.emoji} Testing: "$input"\n\nI\'ll ensure quality and gather evidence. What\'s the acceptance criteria?';
-      case AgentDivision.support:
-        return '${agent.emoji} Supporting: "$input"\n\nI\'ll help resolve this. Can you provide more details?';
-      case AgentDivision.spatialComputing:
-        return '${agent.emoji} Building spatial experience: "$input"\n\nI\'ll create an immersive solution. What\'s the target platform?';
-      case AgentDivision.specialized:
-        return '${agent.emoji} Working on: "$input"\n\nI\'ll leverage specialized expertise. What specific aspect needs attention?';
-    }
-  }
-
-  String _generateMultiAgentResponse(String input) {
-    final lowerInput = input.toLowerCase();
-    
-    if (lowerInput.contains('deactivate') || lowerInput.contains('stop') || lowerInput.contains('exit')) {
-      _deactivateAgent();
-      return '👋 Multi-agent mode deactivated. Back to default!';
-    }
-    
-    final agents = _multiAgentTeam.map((a) => a.emoji).join(' ');
-    return '$agents Team responding to: "$input"\n\nCoordinating ${_multiAgentTeam.length} agents: ${_multiAgentTeam.map((a) => a.name).join(', ')}.\n\nEach specialist is contributing their expertise to address your request.';
-  }
-
-  String _generateDefaultResponse(String input) {
-    final lowerInput = input.toLowerCase();
-    
-    // Handle agent switching commands
-    if (lowerInput.contains('activate') || lowerInput.contains('switch')) {
-      // Try to find matching agent
-      for (final agent in AgencyAgentsData.allAgents) {
-        if (lowerInput.contains(agent.name.toLowerCase())) {
-          _activateAgent(agent);
-          return '🤖 Switching to ${agent.emoji} ${agent.name} mode!';
+    // Send via chat service if available
+    if (_chatService != null && _isConnected) {
+      _chatService!.sendMessage(text).then((success) {
+        if (!success) {
+          // Show error
+          setState(() {
+            final index = _messages.indexWhere((m) => m.id == userMessage.id);
+            if (index != -1) {
+              _messages[index] = ChatMsg(
+                id: userMessage.id,
+                content: userMessage.content,
+                isUser: true,
+                timestamp: userMessage.timestamp,
+                isError: true,
+              );
+            }
+          });
         }
-      }
-      // If no specific agent found, open selector
-      _showAgentSelector();
-      return 'Let me help you find the right agent!';
-    }
-    
-    // Handle multi-agent commands
-    if (lowerInput.contains('multi') || lowerInput.contains('team') || lowerInput.contains('orchestrate')) {
-      _showMultiAgentScreen();
-      return 'Opening multi-agent team selector!';
-    }
-    
-    // Show agent library
-    if (lowerInput.contains('agent') && (lowerInput.contains('library') || lowerInput.contains('browse') || lowerInput.contains('show'))) {
-      _showAgentLibrary();
-      return 'Opening the Agent Library with 61 specialized agents!';
-    }
-    
-    // Standard responses
-    if (lowerInput.contains('hello') || lowerInput.contains('hi')) {
-      return '👋 Hi there! How can I assist you today?\n\n💡 Say "show agents" to browse 61 specialized agents!';
-    } else if (lowerInput.contains('status')) {
-      return '📊 The Gateway is online and running. All systems operational!';
-    } else if (lowerInput.contains('agent')) {
-      return '🤖 I can work in different agent modes!\n\nTry:\n• "show agents" - Browse all 61 agents\n• "activate Frontend Developer" - Switch to specific agent\n• "multi-agent" or "team" - Use multiple agents\n\nOr tap the agent icon below!';
-    } else if (lowerInput.contains('node')) {
-      return '📱 Nodes are connected and reporting status. Check the dashboard for details.';
-    } else if (lowerInput.contains('help')) {
-      return '''💡 I can help you with:
-
-• Checking Gateway status
-• Managing agents (say "show agents")
-• Viewing node information
-• Specialized tasks with agent modes
-
-Try: "show agents", "activate AI Engineer", or "multi-agent"''';
-    } else if (lowerInput.contains('thank')) {
-      return '😊 You\'re welcome! Let me know if you need anything else.';
+      });
     } else {
-      return '🤔 I received: "$input"\n\n💡 Try "show agents" or tap the agent icon to use specialized agent modes!';
+      // No connection - show error after a delay
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted) return;
+        
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == userMessage.id);
+          if (index != -1) {
+            _messages[index] = ChatMsg(
+              id: userMessage.id,
+              content: userMessage.content,
+              isUser: true,
+              timestamp: userMessage.timestamp,
+              isError: true,
+            );
+          }
+          
+          _messages.add(ChatMsg(
+            id: 'error_${DateTime.now().millisecondsSinceEpoch}',
+            content: '❌ Not connected to gateway. Please check your connection in Settings.',
+            isUser: false,
+            timestamp: DateTime.now(),
+            isError: true,
+          ));
+        });
+        _scrollToBottom();
+      });
     }
   }
 
@@ -318,10 +391,7 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
         builder: (context) => PromptTemplatesScreen(
           selectionMode: true,
           onTemplateSelected: (template, filledPrompt) async {
-            // Insert the filled prompt into the text field
             _messageController.text = filledPrompt;
-            
-            // Increment usage count
             final service = await PromptTemplatesService.getInstance();
             await service.incrementUsage(template.id);
           },
@@ -330,7 +400,6 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
     );
   }
 
-  /// Convert internal messages to export format
   List<ExportMessage> _getExportMessages() {
     return _messages.map((m) => ExportMessage(
       id: m.id,
@@ -342,33 +411,10 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
     )).toList();
   }
 
-  /// Show export dialog
-  void _showExportDialog() {
-    if (_messages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No messages to export'),
-        ),
-      );
-      return;
-    }
-    
-    showDialog(
-      context: context,
-      builder: (context) => ExportDialog(
-        messages: _getExportMessages(),
-        title: 'DuckBot Chat',
-      ),
-    );
-  }
-
-  /// Show quick export bottom sheet
   void _showExportSheet() {
     if (_messages.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No messages to export'),
-        ),
+        const SnackBar(content: Text('No messages to export')),
       );
       return;
     }
@@ -398,7 +444,49 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
     return '$hour:$minute';
   }
 
-  /// Build the active agent indicator
+  Widget _buildConnectionStatus() {
+    if (_connectionError.isNotEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: Colors.red.shade100,
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _connectionError,
+                style: const TextStyle(color: Colors.red, fontSize: 12),
+              ),
+            ),
+            TextButton(
+              onPressed: _connectToGateway,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    if (!_isConnected) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: Colors.orange.shade100,
+        child: const Row(
+          children: [
+            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 8),
+            Text('Connecting to gateway...', style: TextStyle(color: Colors.orange, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    
+    return const SizedBox.shrink();
+  }
+
   Widget _buildAgentIndicator() {
     if (_isMultiAgentMode && _multiAgentTeam.isNotEmpty) {
       return GestureDetector(
@@ -416,10 +504,7 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
               const SizedBox(width: 6),
               Text(
                 '${_multiAgentTeam.length} agents',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               ),
               const SizedBox(width: 4),
               const Icon(Icons.expand_more, size: 16),
@@ -452,12 +537,7 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
                 ),
               ),
               const SizedBox(width: 4),
-              Icon(
-                Icons.close,
-                size: 14,
-                color: _activeAgent!.division.color,
-                semanticLabel: 'Deactivate',
-              ),
+              Icon(Icons.close, size: 14, color: _activeAgent!.division.color),
             ],
           ),
         ),
@@ -476,18 +556,22 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
             const Text('🦆 '),
             const Text('DuckBot'),
             const SizedBox(width: 8),
-            if (_activeAgent != null || _isMultiAgentMode) 
-              _buildAgentIndicator(),
+            if (_activeAgent != null || _isMultiAgentMode) _buildAgentIndicator(),
+            const Spacer(),
+            // Connection indicator
+            Icon(
+              _isConnected ? Icons.cloud_done : Icons.cloud_off,
+              color: _isConnected ? Colors.green : Colors.grey,
+              size: 20,
+            ),
           ],
         ),
         actions: [
-          // Export button
           IconButton(
             icon: const Icon(Icons.download),
             onPressed: _showExportSheet,
             tooltip: 'Export chat',
           ),
-          // Agent mode indicator + buttons
           if (_activeAgent != null)
             IconButton(
               icon: const Icon(Icons.person_remove),
@@ -509,12 +593,8 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
             onPressed: () {
               setState(() {
                 _messages.clear();
-                _messages.add(Message(
-                  id: 'welcome',
-                  content: '👋 Hello! I\'m DuckBot. How can I help you today?',
-                  isUser: false,
-                  timestamp: DateTime.now(),
-                ));
+                _addWelcomeMessage();
+                _chatService?.clearMessages();
               });
             },
             tooltip: 'Clear chat',
@@ -523,6 +603,9 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
       ),
       body: Column(
         children: [
+          // Connection status
+          _buildConnectionStatus(),
+          
           // Active agent banner
           if (_activeAgent != null || _isMultiAgentMode)
             Container(
@@ -575,6 +658,33 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
               ),
             ),
           
+          // Typing indicator
+          if (_isTyping)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _activeAgent != null 
+                        ? '${_activeAgent!.name} is typing...'
+                        : 'DuckBot is typing...',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          
           // Messages list
           Expanded(
             child: ListView.builder(
@@ -604,20 +714,6 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
             child: SafeArea(
               child: Row(
                 children: [
-                  // Voice input button (placeholder)
-                  IconButton(
-                    icon: const Icon(Icons.mic),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Voice input coming soon!'),
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
-                    },
-                    tooltip: 'Voice input',
-                  ),
-                  
                   // Agent selector button
                   IconButton(
                     icon: const Icon(Icons.psychology),
@@ -631,20 +727,6 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
                     icon: const Icon(Icons.description_outlined),
                     onPressed: _showTemplates,
                     tooltip: 'Prompt Templates',
-                  ),
-                  
-                  // Attachment button (placeholder)
-                  IconButton(
-                    icon: const Icon(Icons.attach_file),
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('File attachment coming soon!'),
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
-                    },
-                    tooltip: 'Attach file',
                   ),
                   
                   // Text input field
@@ -671,11 +753,12 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
                     ),
                   ),
                   
-                  // Send button
+                  // Send button - FIXED: calls _sendMessage() not searchAgents()
                   IconButton(
                     icon: const Icon(Icons.send),
                     onPressed: _sendMessage,
                     tooltip: 'Send',
+                    color: Theme.of(context).colorScheme.primary,
                   ),
                 ],
               ),
@@ -686,18 +769,18 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
     );
   }
 
-  Widget _buildMessageBubble(Message message) {
+  Widget _buildMessageBubble(ChatMsg message) {
     final isUser = message.isUser;
     final colorScheme = Theme.of(context).colorScheme;
     
-    // Show agent indicator for agent responses
     final showAgentBadge = !isUser && message.agent != null;
+    final hasInlineWidget = message.hasInlineWidget;
     
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
             CircleAvatar(
@@ -728,27 +811,95 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
                   ),
                 Container(
                   constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.75,
+                    maxWidth: hasInlineWidget 
+                        ? MediaQuery.of(context).size.width * 0.85
+                        : MediaQuery.of(context).size.width * 0.75,
                   ),
                   decoration: BoxDecoration(
-                    color: isUser 
-                        ? colorScheme.primary 
-                        : colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(16),
-                      topRight: const Radius.circular(16),
-                      bottomLeft: Radius.circular(isUser ? 16 : 4),
-                      bottomRight: Radius.circular(isUser ? 4 : 16),
-                    ),
+                    color: message.isError
+                        ? Colors.red.shade100
+                        : isUser 
+                            ? colorScheme.primary 
+                            : colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  child: Text(
-                    message.content,
-                    style: TextStyle(
-                      color: isUser 
-                          ? colorScheme.onPrimary 
-                          : colorScheme.onSurface,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Text content
+                      if (message.content.isNotEmpty)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                message.content,
+                                style: TextStyle(
+                                  color: message.isError
+                                      ? Colors.red.shade900
+                                      : isUser 
+                                          ? colorScheme.onPrimary 
+                                          : colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            if (message.isSending) ...[
+                              const SizedBox(width: 8),
+                              const SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            ],
+                          ],
+                        ),
+                      
+                      // Inline weather widget
+                      if (message.hasWeatherWidget) ...[
+                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        InlineWeatherWidget(
+                          data: message.weatherWidget!,
+                          showForecast: message.showWeatherForecast,
+                          isNight: message.isNight,
+                        ),
+                      ],
+                      
+                      // Inline chart widget
+                      if (message.hasChartWidget) ...[
+                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        InlineChartWidget(
+                          chartData: message.chartWidget!,
+                        ),
+                      ],
+                      
+                      // Inline info card widget
+                      if (message.hasInfoCardWidget) ...[
+                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        InlineCardWidget(
+                          data: message.infoCardWidget!,
+                        ),
+                      ],
+                      
+                      // Inline status widget
+                      if (message.hasStatusWidget) ...[
+                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        InlineStatusWidget(
+                          data: message.statusWidget!,
+                        ),
+                      ],
+                      
+                      // Generic inline widget fallback
+                      if (message.inlineWidget != null && 
+                          !message.hasWeatherWidget &&
+                          !message.hasChartWidget &&
+                          !message.hasInfoCardWidget &&
+                          !message.hasStatusWidget) ...[
+                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        _buildGenericInlineWidget(message.inlineWidget!),
+                      ],
+                    ],
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -776,5 +927,80 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
         ],
       ),
     );
+  }
+  
+  /// Build generic inline widget based on type
+  Widget _buildGenericInlineWidget(InlineWidgetData inlineWidget) {
+    switch (inlineWidget.type) {
+      case InlineWidgetType.weather:
+      case InlineWidgetType.forecast:
+        return InlineWeatherWidget(
+          data: WeatherWidgetData.fromMap(inlineWidget.data),
+        );
+        
+      case InlineWidgetType.chart:
+      case InlineWidgetType.data:
+        // Use InlineChartData from agent_chart_tool for charts
+        return InlineChartWidget(
+          chartData: InlineChartData(
+            id: 'inline_chart_${DateTime.now().millisecondsSinceEpoch}',
+            title: inlineWidget.title ?? 'Chart',
+            type: InlineChartType.bar,
+            data: Map<String, double>.from(inlineWidget.data['data'] ?? {}),
+            createdAt: DateTime.now(),
+          ),
+        );
+        
+      case InlineWidgetType.card:
+        return InlineCardWidget(
+          data: InfoCardWidgetData.fromMap(inlineWidget.data),
+        );
+        
+      case InlineWidgetType.status:
+        return InlineStatusWidget(
+          data: StatusWidgetData.fromMap(inlineWidget.data),
+        );
+        
+      case InlineWidgetType.code:
+        return InlineCardWidget(
+          data: InfoCardWidgetData(
+            title: 'Code',
+            description: inlineWidget.data['code']?.toString() ?? '',
+            icon: '💻',
+          ),
+        );
+        
+      case InlineWidgetType.link:
+        return InlineCardWidget(
+          data: InfoCardWidgetData(
+            title: inlineWidget.data['title']?.toString() ?? 'Link',
+            description: inlineWidget.data['url']?.toString() ?? '',
+            icon: '🔗',
+          ),
+        );
+        
+      case InlineWidgetType.image:
+        return InlineCardWidget(
+          data: InfoCardWidgetData(
+            title: 'Image',
+            description: inlineWidget.data['url']?.toString() ?? 'Image',
+            icon: '🖼️',
+          ),
+        );
+        
+      case InlineWidgetType.map:
+        return InlineCardWidget(
+          data: InfoCardWidgetData(
+            title: 'Location',
+            description: inlineWidget.data['address']?.toString() ?? '',
+            icon: '📍',
+          ),
+        );
+        
+      case InlineWidgetType.action:
+        return InlineCardWidget(
+          data: InfoCardWidgetData.fromMap(inlineWidget.data),
+        );
+    }
   }
 }

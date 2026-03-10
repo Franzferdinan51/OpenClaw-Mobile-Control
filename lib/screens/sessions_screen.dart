@@ -408,7 +408,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.session,
+              Icons.chat_bubble_outline,
               size: 64,
               color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
             ),

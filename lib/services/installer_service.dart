@@ -53,7 +53,7 @@ class InstallerService {
         ));
       };
 
-      _nodejsService.onLog = (level, message, details) {
+      _nodejsService.onLog = (level, message, [details]) {
         _log(level, message, details);
       };
 
@@ -64,7 +64,7 @@ class InstallerService {
       _isInitialized = true;
       _log('success', 'InstallerService initialized');
       return true;
-    } catch (e) stackTrace) {
+    } catch (e, stackTrace) {
       _log('error', 'Failed to initialize InstallerService', '$e\n$stackTrace');
       return false;
     }
