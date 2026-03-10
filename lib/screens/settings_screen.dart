@@ -6,6 +6,7 @@ import '../services/theme_service.dart';
 import '../widgets/connection_status_icon.dart';
 import 'theme_selector_screen.dart';
 import 'connect_gateway_screen.dart';
+import 'local_installer_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Function()? onGatewayChanged;
@@ -581,6 +582,36 @@ class _SettingsScreenState extends State<SettingsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Local Installation Section
+          Text(
+            'Local Installation',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.install_desktop, color: Colors.green),
+              title: const Text('Install OpenClaw Locally'),
+              subtitle: const Text('Run OpenClaw gateway on this device'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => LocalInstallerScreen(
+                      onInstallationComplete: () {
+                        widget.onGatewayChanged?.call();
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // Troubleshooting Section
           Text(
             'Troubleshooting',

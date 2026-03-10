@@ -7,6 +7,8 @@ import '../services/discovery_service.dart';
 import '../services/tailscale_service.dart';
 import '../services/connection_monitor_service.dart';
 
+// ScanProgress is defined in discovery_service.dart
+
 /// Unified gateway connection screen
 /// Combines LAN auto-discovery, Tailscale discovery, and manual entry
 class ConnectGatewayScreen extends StatefulWidget {
@@ -38,16 +40,21 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
   late StreamSubscription<List<DiscoveryLogEntry>> _logsSubscription;
   final ScrollController _logsScrollController = ScrollController();
 
+  // Scan progress state
+  ScanProgress _scanProgress = ScanProgress(percent: 0, scanned: 0, total: 0, status: 'Idle');
+  late StreamSubscription<ScanProgress> _progressSubscription;
+
   // Manual entry controllers
   final _manualFormKey = GlobalKey<FormState>();
   final _urlController = TextEditingController();
   final _tokenController = TextEditingController();
   bool _testingManual = false;
-  String? _manualTestResult;
+  Map<String, dynamic>? _manualTestResult;
 
   // Connection state
   bool _connecting = false;
   String? _connectionError;
+  String? _connectionErrorDetails;
 
   @override
   void initState() {
@@ -57,6 +64,17 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
     _checkTailscale();
     _startDiscovery();
     _subscribeToLogs();
+    _subscribeToProgress();
+  }
+
+  void _subscribeToProgress() {
+    _progressSubscription = _discoveryService.scanProgress.listen((progress) {
+      if (mounted) {
+        setState(() {
+          _scanProgress = progress;
+        });
+      }
+    });
   }
 
   void _subscribeToLogs() {
@@ -107,7 +125,6 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
       if (mounted) {
         setState(() {
           _lanGateways = gateways;
-          _isScanning = false;
         });
 
         // Show prompt if new gateway found and we're on the auto tab
@@ -326,23 +343,20 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
     setState(() {
       _connecting = true;
       _connectionError = null;
+      _connectionErrorDetails = null;
     });
 
     try {
-      // Test connection first
-      final success = await _discoveryService.testConnection(gateway);
+      // Test connection first with detailed diagnostics
+      final testResult = await _discoveryService.testConnection(gateway);
 
-      if (!success) {
+      if (!testResult['success']) {
         setState(() {
           _connecting = false;
-          _connectionError = 'Could not connect to gateway';
+          _connectionError = testResult['error'] ?? 'Could not connect to gateway';
+          _connectionErrorDetails = testResult['details'];
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('❌ Connection failed'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showDetailedErrorDialog();
         return;
       }
 
@@ -391,12 +405,96 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
     }
   }
 
+  void _showDetailedErrorDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Connection Failed'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _connectionError ?? 'Unknown error',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.red,
+                ),
+              ),
+              if (_connectionErrorDetails != null) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'Debug Details:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SelectableText(
+                    _connectionErrorDetails!,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'Common fixes:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '1. Run: openclaw gateway run --bind lan\n'
+                '2. Check: openclaw gateway status\n'
+                '3. Verify phone and gateway on same WiFi\n'
+                '4. Check firewall allows port 18789',
+                style: TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(
+                text: 'Error: $_connectionError\n\nDetails:\n$_connectionErrorDetails',
+              ));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Error details copied')),
+              );
+            },
+            child: const Text('COPY'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _testManualConnection() async {
     if (!_manualFormKey.currentState!.validate()) return;
 
     setState(() {
       _testingManual = true;
       _manualTestResult = null;
+      _connectionError = null;
+      _connectionErrorDetails = null;
     });
 
     try {
@@ -407,16 +505,23 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
         token: _tokenController.text.isNotEmpty ? _tokenController.text : null,
       );
 
-      final success = await _discoveryService.testConnection(gateway);
+      final result = await _discoveryService.testConnection(gateway);
 
       setState(() {
         _testingManual = false;
-        _manualTestResult = success ? '✓ Connection successful!' : '✗ Connection failed';
+        _manualTestResult = result;
+        if (!result['success']) {
+          _connectionError = result['error'];
+          _connectionErrorDetails = result['details'];
+        }
       });
     } catch (e) {
       setState(() {
         _testingManual = false;
-        _manualTestResult = '✗ Error: $e';
+        _manualTestResult = {
+          'success': false,
+          'error': 'Error: $e',
+        };
       });
     }
   }
@@ -464,26 +569,32 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
                 '1. Make sure gateway is running',
                 [
                   'Check that OpenClaw gateway is started on your computer',
-                  'Verify the gateway process is running (openclaw gateway status)',
+                  'Run: openclaw gateway status',
                   'Look for the gateway to be listening on port 18789',
+                  'IMPORTANT: Use --bind lan for network access',
+                  '  openclaw gateway run --bind lan',
                 ],
               ),
               const SizedBox(height: 16),
               _buildTroubleshootingSection(
-                '2. Make sure mDNS is enabled',
-                [
-                  'Check your gateway config file',
-                  'Ensure mDNS/Bonjour advertising is enabled',
-                  'The gateway should advertise as "_openclaw-gw._tcp"',
-                ],
-              ),
-              const SizedBox(height: 16),
-              _buildTroubleshootingSection(
-                '3. Check network connectivity',
+                '2. Check network connectivity',
                 [
                   'Your phone and gateway must be on the same network',
-                  'mDNS does not work over Tailscale directly',
-                  'For Tailscale, use Manual entry with the Tailscale IP',
+                  'Try: curl http://GATEWAY_IP:18789/health',
+                  'Should return: {"ok":true,"status":"live"}',
+                  'If "No route to host", check firewall settings',
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildTroubleshootingSection(
+                '3. Common error: "No route to host"',
+                [
+                  'This means the gateway is not reachable from your phone',
+                  'Solutions:',
+                  '  a) Start gateway with --bind lan',
+                  '  b) Check firewall allows port 18789',
+                  '  c) Verify IP address is correct',
+                  '  d) Ensure both devices on same network',
                 ],
               ),
               const SizedBox(height: 16),
@@ -493,6 +604,7 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
                   'Use the Manual tab to enter the gateway IP directly',
                   'Format: http://192.168.1.100:18789',
                   'For Tailscale: http://100.x.x.x:18789',
+                  'Check debug logs for detailed error information',
                 ],
               ),
             ],
@@ -545,6 +657,7 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
     _urlController.dispose();
     _tokenController.dispose();
     _logsSubscription.cancel();
+    _progressSubscription.cancel();
     _logsScrollController.dispose();
     _discoveryService.dispose();
     super.dispose();
@@ -876,9 +989,10 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
             ),
             const SizedBox(height: 8),
             const Text(
-              '• Gateway must be running with mDNS enabled\n'
+              '• Gateway must be running with --bind lan for network access\n'
               '• Phone and gateway must be on the same network\n'
-              '• mDNS does not work over Tailscale - use Manual tab',
+              '• Use Manual tab if auto-discovery fails\n'
+              '• Check debug logs for detailed error information',
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -909,6 +1023,7 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
   Widget _buildScanStatusCard() {
     final hasResults = _lanGateways.isNotEmpty || _tailscaleGateways.isNotEmpty;
     final isScanning = _isScanning || _tailscaleScanning;
+    final scanProgress = _scanProgress;
 
     return Card(
       color: hasResults
@@ -918,50 +1033,78 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
               : Colors.orange.withOpacity(0.1),
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Column(
           children: [
-            if (isScanning)
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              Icon(
-                hasResults ? Icons.wifi_find : Icons.wifi_off,
-                color: hasResults ? Colors.green : Colors.orange,
-              ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isScanning
-                        ? 'Scanning for gateways...'
-                        : hasResults
-                            ? '${_lanGateways.length + _tailscaleGateways.length} gateway(s) found'
-                            : 'No gateways found',
-                    style: const TextStyle(fontWeight: FontWeight.w500),
+            Row(
+              children: [
+                if (isScanning)
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Icon(
+                    hasResults ? Icons.wifi_find : Icons.wifi_off,
+                    color: hasResults ? Colors.green : Colors.orange,
                   ),
-                  if (!isScanning)
-                    Text(
-                      hasResults
-                          ? 'Tap a gateway to connect'
-                          : 'Pull down to scan again or check debug logs',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                ],
-              ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isScanning
+                            ? 'Scanning for gateways...'
+                            : hasResults
+                                ? '${_lanGateways.length + _tailscaleGateways.length} gateway(s) found'
+                                : 'No gateways found',
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      if (isScanning && scanProgress.total > 0)
+                        Text(
+                          '${scanProgress.percent}% - ${scanProgress.status}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.blue,
+                          ),
+                        )
+                      else if (!isScanning)
+                        Text(
+                          hasResults
+                              ? 'Tap a gateway to connect'
+                              : 'Pull down to scan again or check debug logs',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                    ],
+                  ),
+                ),
+                if (!isScanning)
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () async {
+                      await _discoveryService.scan();
+                      if (_tailscaleRunning) await _scanTailscale();
+                    },
+                  ),
+              ],
             ),
-            if (!isScanning)
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () async {
-                  await _discoveryService.scan();
-                  if (_tailscaleRunning) await _scanTailscale();
-                },
+            // Progress bar when scanning
+            if (isScanning && scanProgress.total > 0) ...[
+              const SizedBox(height: 12),
+              LinearProgressIndicator(
+                value: scanProgress.percent / 100,
+                backgroundColor: Colors.grey[300],
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
               ),
+              const SizedBox(height: 4),
+              Text(
+                '${scanProgress.scanned}/${scanProgress.total} IPs checked',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 11,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1267,15 +1410,84 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
             if (_manualTestResult != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  _manualTestResult!,
-                  style: TextStyle(
-                    color: _manualTestResult!.startsWith('✓')
-                        ? Colors.green
-                        : Colors.red,
-                    fontWeight: FontWeight.bold,
+                child: Card(
+                  color: _manualTestResult!['success'] == true
+                      ? Colors.green.withOpacity(0.1)
+                      : Colors.red.withOpacity(0.1),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              _manualTestResult!['success'] == true
+                                  ? Icons.check_circle
+                                  : Icons.error,
+                              color: _manualTestResult!['success'] == true
+                                  ? Colors.green
+                                  : Colors.red,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _manualTestResult!['success'] == true
+                                    ? '✓ Connection successful!'
+                                    : '✗ Connection failed',
+                                style: TextStyle(
+                                  color: _manualTestResult!['success'] == true
+                                      ? Colors.green
+                                      : Colors.red,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_manualTestResult!['endpoint'] != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Working endpoint: ${_manualTestResult!['endpoint']}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                        if (_manualTestResult!['error'] != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _manualTestResult!['error'].toString(),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                        if (_manualTestResult!['details'] != null) ...[
+                          const SizedBox(height: 8),
+                          InkWell(
+                            onTap: () {
+                              Clipboard.setData(ClipboardData(
+                                text: _manualTestResult!['details'].toString(),
+                              ));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Details copied')),
+                              );
+                            },
+                            child: Row(
+                              children: [
+                                const Icon(Icons.copy, size: 16),
+                                const SizedBox(width: 4),
+                                const Text(
+                                  'Copy debug details',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                  textAlign: TextAlign.center,
                 ),
               ),
             const SizedBox(height: 24),
@@ -1299,10 +1511,49 @@ class _ConnectGatewayScreenState extends State<ConnectGatewayScreen>
             if (_connectionError != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  _connectionError!,
-                  style: const TextStyle(color: Colors.red),
-                  textAlign: TextAlign.center,
+                child: Card(
+                  color: Colors.red.withOpacity(0.1),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.error, color: Colors.red),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _connectionError!,
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_connectionErrorDetails != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: InkWell(
+                              onTap: _showDetailedErrorDialog,
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.bug_report, size: 16, color: Colors.blue),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'View debug details',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.blue[700],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
           ],

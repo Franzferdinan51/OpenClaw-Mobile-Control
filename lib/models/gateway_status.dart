@@ -1,3 +1,8 @@
+/// Gateway status model
+/// 
+/// Handles both:
+/// - /health endpoint: {"ok":true,"status":"live"}
+/// - Full status from WebSocket RPC
 class GatewayStatus {
   final bool online;
   final String version;
@@ -9,11 +14,12 @@ class GatewayStatus {
   final List<NodeInfo>? nodes;
   final List<CronInfo>? crons;
   final bool isPaused;
+  final Map<String, dynamic>? rawData;
 
   GatewayStatus({
     required this.online,
-    required this.version,
-    required this.uptime,
+    this.version = 'unknown',
+    this.uptime = 0,
     this.cpuPercent,
     this.memoryUsed,
     this.memoryTotal,
@@ -21,16 +27,39 @@ class GatewayStatus {
     this.nodes,
     this.crons,
     this.isPaused = false,
+    this.rawData,
   });
 
-  factory GatewayStatus.fromJson(Map<String, dynamic> json) {
+  /// Parse from /health endpoint response
+  /// 
+  /// /health returns: {"ok":true,"status":"live"}
+  factory GatewayStatus.fromHealthJson(Map<String, dynamic> json) {
     return GatewayStatus(
-      online: json['gateway']?['status'] == 'online',
-      version: json['gateway']?['version'] ?? 'unknown',
-      uptime: json['gateway']?['uptime'] ?? 0,
-      cpuPercent: json['gateway']?['cpu_percent']?.toDouble(),
-      memoryUsed: json['gateway']?['memory_used'],
-      memoryTotal: json['gateway']?['memory_total'],
+      online: json['ok'] == true || json['status'] == 'live',
+      version: json['version'] ?? 'unknown',
+      uptime: json['uptime'] ?? 0,
+      cpuPercent: json['cpu_percent']?.toDouble(),
+      memoryUsed: json['memory_used'],
+      memoryTotal: json['memory_total'],
+      isPaused: json['paused'] == true,
+      rawData: json,
+    );
+  }
+
+  /// Parse from full gateway status (WebSocket RPC or /api/gateway)
+  factory GatewayStatus.fromJson(Map<String, dynamic> json) {
+    // Handle different response formats
+    final gateway = json['gateway'] ?? json;
+    
+    return GatewayStatus(
+      online: gateway['status'] == 'online' || 
+              gateway['status'] == 'live' || 
+              json['ok'] == true,
+      version: gateway['version'] ?? 'unknown',
+      uptime: gateway['uptime'] ?? 0,
+      cpuPercent: gateway['cpu_percent']?.toDouble(),
+      memoryUsed: gateway['memory_used'],
+      memoryTotal: gateway['memory_total'],
       agents: (json['agents'] as List?)
           ?.map((a) => AgentInfo.fromJson(a))
           .toList(),
@@ -40,7 +69,8 @@ class GatewayStatus {
       crons: (json['crons'] as List?)
           ?.map((c) => CronInfo.fromJson(c))
           .toList(),
-      isPaused: json['paused'] == true || json['gateway']?['paused'] == true,
+      isPaused: json['paused'] == true || gateway['paused'] == true,
+      rawData: json,
     );
   }
 
@@ -59,6 +89,40 @@ class GatewayStatus {
     'crons': crons?.map((c) => c.toJson()).toList(),
     'paused': isPaused,
   };
+
+  /// Get formatted uptime string
+  String get formattedUptime {
+    if (uptime <= 0) return 'Unknown';
+    
+    final duration = Duration(seconds: uptime);
+    final days = duration.inDays;
+    final hours = duration.inHours % 24;
+    final minutes = duration.inMinutes % 60;
+    
+    if (days > 0) {
+      return '${days}d ${hours}h ${minutes}m';
+    } else if (hours > 0) {
+      return '${hours}h ${minutes}m';
+    } else {
+      return '${minutes}m';
+    }
+  }
+
+  /// Get formatted memory usage
+  String? get formattedMemory {
+    if (memoryUsed == null || memoryTotal == null) return null;
+    
+    final used = memoryUsed! / 1024 / 1024; // MB
+    final total = memoryTotal! / 1024 / 1024; // MB
+    
+    return '${used.toStringAsFixed(1)} MB / ${total.toStringAsFixed(1)} MB';
+  }
+
+  /// Get memory usage percentage
+  double? get memoryPercent {
+    if (memoryUsed == null || memoryTotal == null || memoryTotal == 0) return null;
+    return (memoryUsed! / memoryTotal!) * 100;
+  }
 }
 
 class AgentInfo {
@@ -66,20 +130,26 @@ class AgentInfo {
   final String status;
   final String? currentTask;
   final String? model;
+  final bool isActive;
+  final int? totalTokens;
 
   AgentInfo({
     required this.name,
     required this.status,
     this.currentTask,
     this.model,
+    this.isActive = false,
+    this.totalTokens,
   });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) {
     return AgentInfo(
-      name: json['name'] ?? 'Unknown',
+      name: json['name'] ?? json['agentId'] ?? 'Unknown',
       status: json['status'] ?? 'unknown',
-      currentTask: json['current_task'],
+      currentTask: json['current_task'] ?? json['currentTask'],
       model: json['model'],
+      isActive: json['isActive'] == true || json['status'] == 'active',
+      totalTokens: json['totalTokens'] ?? json['total_tokens'],
     );
   }
 
@@ -88,6 +158,8 @@ class AgentInfo {
     'status': status,
     'current_task': currentTask,
     'model': model,
+    'isActive': isActive,
+    'totalTokens': totalTokens,
   };
 }
 
@@ -106,10 +178,10 @@ class NodeInfo {
 
   factory NodeInfo.fromJson(Map<String, dynamic> json) {
     return NodeInfo(
-      name: json['name'] ?? 'Unknown',
+      name: json['name'] ?? json['nodeId'] ?? 'Unknown',
       status: json['status'] ?? 'unknown',
-      connectionType: json['connection_type'],
-      ip: json['ip'],
+      connectionType: json['connection_type'] ?? json['connectionType'],
+      ip: json['ip'] ?? json['address'],
     );
   }
 
@@ -140,11 +212,11 @@ class CronInfo {
 
   factory CronInfo.fromJson(Map<String, dynamic> json) {
     return CronInfo(
-      name: json['name'] ?? 'Unknown',
+      name: json['name'] ?? json['cronName'] ?? 'Unknown',
       schedule: json['schedule'] ?? '',
       enabled: json['enabled'] ?? true,
-      lastRun: json['last_run'],
-      nextRun: json['next_run'],
+      lastRun: json['last_run'] ?? json['lastRun'],
+      nextRun: json['next_run'] ?? json['nextRun'],
       status: json['status'],
     );
   }

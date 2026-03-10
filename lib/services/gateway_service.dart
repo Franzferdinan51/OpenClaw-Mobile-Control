@@ -15,6 +15,26 @@ import '../models/chat_message.dart';
 /// - Supports Tailscale IPs (100.x.x.x:18789)
 /// - All connections use HTTP (not HTTPS) for local networks
 /// - Timeout handling is critical for mobile networks
+/// 
+/// OPENCLAW GATEWAY REST API ENDPOINTS:
+/// - GET /api/gateway - Gateway status, sessions, nodes
+/// - GET /api/status - Alternative status endpoint
+/// - GET /health - Health check
+/// - POST /api/gateway/action - Send message to agent, broadcast, get history
+/// - GET /api/gateway/autowork - Get autowork config
+/// - POST /api/gateway/autowork - Update autowork config
+/// - PUT /api/gateway/autowork - Trigger autowork
+/// - GET /api/logs - Get gateway logs
+/// 
+/// CONTROL ENDPOINTS (POST with confirm: true):
+/// - POST /api/mobile/control/gateway/restart - Restart gateway
+/// - POST /api/mobile/control/gateway/stop - Stop gateway
+/// - POST /api/mobile/control/agent/{sessionKey}/kill - Kill agent
+/// - POST /api/mobile/control/node/{nodeName}/reconnect - Reconnect node
+/// - POST /api/mobile/control/cron/{cronName}/run - Run cron
+/// - POST /api/mobile/control/cron/{cronName}/toggle - Toggle cron
+/// - POST /api/mobile/control/pause-all - Pause all agents
+/// - POST /api/mobile/control/resume-all - Resume all agents
 class GatewayService {
   String baseUrl;
   String? token;
@@ -65,10 +85,50 @@ class GatewayService {
   /// Get gateway status with timeout
   /// 
   /// This is the primary health check endpoint
+  /// Tries /api/gateway first, then /api/status, then /health
   Future<GatewayStatus?> getStatus({Duration? timeout}) async {
+    // Try /api/gateway first
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/api/mobile/status'),
+        Uri.parse('$baseUrl/api/gateway'),
+        headers: _headers,
+      ).timeout(timeout ?? _shortTimeout);
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        return GatewayStatus.fromJson(json);
+      }
+    } on TimeoutException {
+      print('⏱️ Gateway /api/gateway request timed out');
+    } on SocketException catch (e) {
+      print('❌ Connection refused: $e');
+    } catch (e) {
+      print('❌ Error getting status from /api/gateway: $e');
+    }
+
+    // Fallback to /api/status
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/status'),
+        headers: _headers,
+      ).timeout(timeout ?? _shortTimeout);
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        return GatewayStatus.fromJson(json);
+      }
+    } on TimeoutException {
+      print('⏱️ Gateway /api/status request timed out');
+    } on SocketException catch (e) {
+      print('❌ Connection refused: $e');
+    } catch (e) {
+      print('❌ Error getting status from /api/status: $e');
+    }
+
+    // Final fallback to /health
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/health'),
         headers: _headers,
       ).timeout(timeout ?? _shortTimeout);
 
@@ -79,58 +139,85 @@ class GatewayService {
         print('⚠️ Gateway returned status ${response.statusCode}');
       }
     } on TimeoutException {
-      print('⏱️ Gateway status request timed out');
+      print('⏱️ Gateway /health request timed out');
     } on SocketException catch (e) {
       print('❌ Connection refused: $e');
     } catch (e) {
-      print('❌ Error getting status: $e');
+      print('❌ Error getting status from /health: $e');
     }
+    
     return null;
   }
 
   /// Check if gateway is reachable
   /// 
-  /// Quick check for connectivity
+  /// Quick check for connectivity - tries all endpoints
   Future<bool> isReachable() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/mobile/status'),
-        headers: _headers,
-      ).timeout(const Duration(seconds: 3));
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
+    final endpoints = ['/api/gateway', '/api/status', '/health'];
+    
+    for (final endpoint in endpoints) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl$endpoint'),
+          headers: _headers,
+        ).timeout(const Duration(seconds: 3));
+        if (response.statusCode == 200) {
+          return true;
+        }
+      } catch (e) {
+        // Try next endpoint
+      }
     }
+    return false;
   }
 
   /// Check if gateway is reachable with detailed error
   /// 
   /// Returns a map with success status and error message if failed
   Future<Map<String, dynamic>> checkConnection() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/mobile/status'),
-        headers: _headers,
-      ).timeout(const Duration(seconds: 5));
+    final endpoints = [
+      {'path': '/api/gateway', 'name': 'Gateway API'},
+      {'path': '/api/status', 'name': 'Status API'},
+      {'path': '/health', 'name': 'Health Check'},
+    ];
+    
+    for (final endpoint in endpoints) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl${endpoint['path']}'),
+          headers: _headers,
+        ).timeout(const Duration(seconds: 5));
 
-      if (response.statusCode == 200) {
-        return {'success': true, 'status': response.statusCode};
-      } else {
+        if (response.statusCode == 200) {
+          return {
+            'success': true, 
+            'status': response.statusCode,
+            'endpoint': endpoint['name'],
+          };
+        } else {
+          return {
+            'success': false, 
+            'error': 'HTTP ${response.statusCode}',
+            'status': response.statusCode,
+            'endpoint': endpoint['name'],
+          };
+        }
+      } on TimeoutException {
+        // Try next endpoint
+      } on SocketException catch (e) {
         return {
           'success': false, 
-          'error': 'HTTP ${response.statusCode}',
-          'status': response.statusCode
+          'error': 'Connection refused: ${e.message}',
+          'endpoint': endpoint['name'],
         };
+      } on FormatException {
+        return {'success': false, 'error': 'Invalid URL format'};
+      } catch (e) {
+        // Try next endpoint
       }
-    } on TimeoutException {
-      return {'success': false, 'error': 'Connection timed out'};
-    } on SocketException catch (e) {
-      return {'success': false, 'error': 'Connection refused: ${e.message}'};
-    } on FormatException {
-      return {'success': false, 'error': 'Invalid URL format'};
-    } catch (e) {
-      return {'success': false, 'error': e.toString()};
     }
+    
+    return {'success': false, 'error': 'All endpoints failed'};
   }
 
   // ============================================================

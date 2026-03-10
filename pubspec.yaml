@@ -32,6 +32,8 @@ dependencies:
   # Export & Sharing
   pdf: ^3.10.8  # PDF generation
   share_plus: ^7.2.2  # System share sheet
+  # Permissions
+  permission_handler: ^11.3.0  # Runtime permissions
 
 dev_dependencies:
   flutter_test:

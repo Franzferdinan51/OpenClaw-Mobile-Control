@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/connection_monitor_service.dart';
-import '../models/gateway_status.dart';
 
 /// Connection status card for dashboard
 class ConnectionStatusCard extends StatefulWidget {

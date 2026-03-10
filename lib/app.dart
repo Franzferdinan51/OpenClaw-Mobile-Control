@@ -5,7 +5,6 @@ import '../services/discovery_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/connection_monitor_service.dart';
 import '../services/theme_service.dart';
-import '../models/gateway_status.dart';
 import '../dialogs/connection_success_dialog.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/chat_screen.dart';
@@ -18,6 +17,7 @@ import 'screens/workflows_screen.dart';
 import 'screens/scheduled_tasks_screen.dart';
 import 'screens/model_hub_screen.dart';
 import 'screens/global_search_screen.dart';
+import 'screens/local_installer_screen.dart';
 
 class DuckBotGoApp extends StatefulWidget {
   const DuckBotGoApp({super.key});
@@ -578,10 +578,15 @@ class _GuidedSetupScreen extends StatelessWidget {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Termux installation flow coming soon!'),
-                  backgroundColor: Colors.blue,
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => LocalInstallerScreen(
+                    onInstallationComplete: () {
+                      // Refresh app state after installation
+                      onComplete();
+                    },
+                  ),
                 ),
               );
             },

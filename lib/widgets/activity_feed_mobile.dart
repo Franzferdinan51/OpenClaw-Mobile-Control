@@ -216,7 +216,7 @@ class _ActivityFeedMobileState extends State<ActivityFeedMobile>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.activity, size: 64, color: Colors.grey[600]),
+          Icon(Icons.local_activity, size: 64, color: Colors.grey[600]),
           const SizedBox(height: 16),
           Text(
             'No events yet',

@@ -1,5 +1,3 @@
-import 'package:flutter/material.dart';
-
 /// Skill category types
 enum SkillCategory {
   automation,
@@ -253,7 +251,7 @@ class Skill {
       name: json['name'] as String? ?? 'Unknown Skill',
       description: json['description'] as String? ?? json['shortDescription'] as String? ?? '',
       fullDescription: json['fullDescription'] as String? ?? json['description'] as String? ?? '',
-      category: SkillCategory.fromString(json['category'] as String? ?? 'other'),
+      category: SkillCategoryExtension.fromString(json['category'] as String? ?? 'other'),
       version: json['version'] as String? ?? '1.0.0',
       author: json['author'] as String? ?? 'Unknown',
       authorUrl: json['authorUrl'] as String?,

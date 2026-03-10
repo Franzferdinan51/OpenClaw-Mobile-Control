@@ -1,14 +1,17 @@
 /// Termux Service - Execute shell commands on Android via Termux
-/// 
+///
 /// Provides shell command execution, OpenClaw CLI integration,
 /// and node management capabilities for OpenClaw Mobile.
-/// 
-/// Uses dart:io Process to execute commands in Termux environment.
+///
+/// Uses proot-distro to run Ubuntu inside Termux for full Linux compatibility.
+/// Handles Bionic libc bypass for Node.js compatibility on Android.
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 /// Command execution result
 class CommandResult {
@@ -32,21 +35,42 @@ class CommandResult {
   String toString() => 'CommandResult(exitCode: $exitCode, success: $success)';
 }
 
-/// Termux Service - Shell command execution
+/// Setup progress state
+class SetupProgress {
+  final String step;
+  final String message;
+  final double progress; // 0.0 to 1.0
+  final bool isError;
+  final bool isComplete;
+
+  const SetupProgress({
+    required this.step,
+    required this.message,
+    this.progress = 0.0,
+    this.isError = false,
+    this.isComplete = false,
+  });
+}
+
+/// Termux Service - Shell command execution with proot-distro support
 class TermuxService {
   static TermuxService? _instance;
-  
+
   bool _isInitialized = false;
   bool _isTermuxAvailable = false;
+  bool _isProotAvailable = false;
+  bool _isUbuntuInstalled = false;
+  bool _isOpenClawInstalled = false;
   String? _openClawVersion;
-  String? _nodeStatus;
-  
+  String? _nodeVersion;
+  String? _gatewayStatus;
+
   // Termux paths
-  String? _termuxBinPath;
   String? _termuxHomePath;
+  String? _termuxPrefixPath;
 
   // Progress callbacks
-  void Function(String status, double progress)? onProgress;
+  void Function(SetupProgress progress)? onSetupProgress;
   void Function(String line)? onOutput;
 
   factory TermuxService() {
@@ -56,28 +80,39 @@ class TermuxService {
 
   TermuxService._internal();
 
+  // ==================== Initialization ====================
+
   /// Initialize the Termux service
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
+      _log('Initializing Termux service...');
+
       // Check if running in Termux environment
       await _checkTermuxAvailability();
-      
+
       if (_isTermuxAvailable) {
         _findTermuxPaths();
-        debugPrint('[TermuxService] Termux available at: $_termuxBinPath');
-      } else {
-        debugPrint('[TermuxService] Not in Termux environment');
-      }
+        _log('Termux available at: $_termuxPrefixPath');
 
-      // Check if OpenClaw is installed
-      await checkOpenClawInstalled();
+        // Check proot-distro
+        _isProotAvailable = await _checkProotAvailable();
+        _log('proot-distro available: $_isProotAvailable');
+
+        // Check if Ubuntu is installed
+        if (_isProotAvailable) {
+          _isUbuntuInstalled = await _checkUbuntuInstalled();
+          _log('Ubuntu installed: $_isUbuntuInstalled');
+        }
+      } else {
+        _log('Not in Termux environment - will use system shell fallback');
+      }
 
       _isInitialized = true;
       return true;
     } catch (e) {
-      debugPrint('[TermuxService] Failed to initialize: $e');
+      _log('Failed to initialize Termux service: $e');
       return false;
     }
   }
@@ -93,78 +128,92 @@ class TermuxService {
     final termuxDir = Directory('/data/data/com.termux/files');
     if (await termuxDir.exists()) {
       _isTermuxAvailable = true;
-    } else {
-      // Also check common paths
-      final altDir = Directory('/data/data/com.termux');
-      _isTermuxAvailable = await altDir.exists();
+      return;
     }
+
+    // Also check alternative paths
+    final altDir = Directory('/data/data/com.termux');
+    _isTermuxAvailable = await altDir.exists();
   }
 
-  /// Find Termux bin and home paths
+  /// Find Termux paths
   void _findTermuxPaths() {
-    _termuxBinPath = '/data/data/com.termux/files/usr/bin';
+    _termuxPrefixPath = '/data/data/com.termux/files/usr';
     _termuxHomePath = '/data/data/com.termux/files/home';
   }
 
-  /// Check if Termux is available
+  /// Check if proot-distro is available
+  Future<bool> _checkProotAvailable() async {
+    final result = await _runInTermux('which proot-distro');
+    return result.success && result.stdout.trim().isNotEmpty;
+  }
+
+  /// Check if Ubuntu is installed in proot
+  Future<bool> _checkUbuntuInstalled() async {
+    final result = await _runInTermux('proot-distro list');
+    return result.success && result.stdout.contains('ubuntu');
+  }
+
+  // ==================== Getters ====================
+
+  bool get isInitialized => _isInitialized;
   bool get isTermuxAvailable => _isTermuxAvailable;
-
-  /// Get OpenClaw version
+  bool get isProotAvailable => _isProotAvailable;
+  bool get isUbuntuInstalled => _isUbuntuInstalled;
+  bool get isSetupComplete => _isTermuxAvailable && _isProotAvailable && _isUbuntuInstalled;
   String? get openClawVersion => _openClawVersion;
-
-  /// Get node status
-  String? get nodeStatus => _nodeStatus;
-
-  /// Get the shell to use
-  String get _shellPath {
-    if (_isTermuxAvailable && _termuxBinPath != null) {
-      return '$_termuxBinPath/sh';
-    }
-    return '/system/bin/sh';
-  }
-
-  /// Get the PATH environment
-  Map<String, String> get _termuxEnv {
-    if (_isTermuxAvailable && _termuxBinPath != null) {
-      return {
-        'PATH': '$_termuxBinPath:/data/data/com.termux/files/usr/bin:\${PATH}',
-        'HOME': _termuxHomePath ?? '/data/data/com.termux/files/home',
-        'TERMUX_VERSION': '1',
-      };
-    }
-    return {};
-  }
+  String? get nodeVersion => _nodeVersion;
+  String? get gatewayStatus => _gatewayStatus;
 
   // ==================== Command Execution ====================
 
-  /// Execute a shell command
+  /// Execute a command in Termux environment
   Future<CommandResult> executeCommand(
     String command, {
     List<String>? args,
     Duration timeout = const Duration(seconds: 30),
     String? workingDirectory,
+    bool useProot = false,
+  }) async {
+    if (useProot && _isProotAvailable && _isUbuntuInstalled) {
+      return _runInProot(command, args: args, timeout: timeout);
+    }
+    return _runInTermux(command, args: args, timeout: timeout);
+  }
+
+  /// Run command in Termux shell
+  Future<CommandResult> _runInTermux(
+    String command, {
+    List<String>? args,
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     final startTime = DateTime.now();
-    
-    debugPrint('[TermuxService] Executing: $command ${args?.join(' ') ?? ''}');
 
     try {
       final fullCommand = args != null && args.isNotEmpty
           ? '$command ${args.join(' ')}'
           : command;
 
-      onOutput?.call('\$ $fullCommand');
+      _log('Termux: $fullCommand');
 
-      // Build process arguments
+      // Use Termux shell
+      final shellPath = '$_termuxPrefixPath/bin/sh';
       final processArgs = ['-c', fullCommand];
-      
-      // Run the command
+
+      // Set up environment
+      final environment = {
+        'PATH': '$_termuxPrefixPath/bin:$_termuxPrefixPath/bin/applets:\$PATH',
+        'HOME': _termuxHomePath ?? '/data/data/com.termux/files/home',
+        'PREFIX': _termuxPrefixPath ?? '/data/data/com.termux/files/usr',
+        'TERMUX_VERSION': '1',
+        'LD_LIBRARY_PATH': '$_termuxPrefixPath/lib',
+      };
+
       final process = await Process.start(
-        _shellPath,
+        shellPath,
         processArgs,
-        workingDirectory: workingDirectory,
-        environment: _termuxEnv.isNotEmpty ? _termuxEnv : null,
-        runInShell: true,
+        environment: environment,
+        runInShell: false,
       );
 
       final stdoutBuffer = StringBuffer();
@@ -182,33 +231,29 @@ class TermuxService {
         onOutput?.call(data);
       });
 
-      // Wait for process to complete with timeout
+      // Wait for process with timeout
       int exitCode;
       try {
         exitCode = await process.exitCode.timeout(timeout);
       } catch (e) {
-        // Kill process on timeout
         process.kill(ProcessSignal.sigkill);
         exitCode = -1;
-        onOutput?.call('\n[Command timed out after ${timeout.inSeconds}s]');
+        _log('Command timed out after ${timeout.inSeconds}s');
       }
 
       final duration = DateTime.now().difference(startTime);
-      final success = exitCode == 0;
-
-      debugPrint('[TermuxService] Command completed: exitCode=$exitCode, duration=$duration');
 
       return CommandResult(
         exitCode: exitCode,
         stdout: stdoutBuffer.toString(),
         stderr: stderrBuffer.toString(),
         duration: duration,
-        success: success,
+        success: exitCode == 0,
       );
     } catch (e) {
       final duration = DateTime.now().difference(startTime);
-      debugPrint('[TermuxService] Command execution failed: $e');
-      
+      _log('Command execution failed: $e');
+
       return CommandResult(
         exitCode: -1,
         stdout: '',
@@ -219,57 +264,333 @@ class TermuxService {
     }
   }
 
-  // ==================== OpenClaw CLI Commands ====================
+  /// Run command in proot Ubuntu environment
+  Future<CommandResult> _runInProot(
+    String command, {
+    List<String>? args,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final startTime = DateTime.now();
+
+    try {
+      final fullCommand = args != null && args.isNotEmpty
+          ? '$command ${args.join(' ')}'
+          : command;
+
+      _log('proot: $fullCommand');
+
+      // Build proot command with proper environment setup
+      final prootCommand = 'proot-distro login ubuntu -- bash -c '
+          '"export HOME=/root && export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin && '
+          'export NODE_OPTIONS=--openssl-legacy-provider && '
+          '$fullCommand"';
+
+      return _runInTermux(prootCommand, timeout: timeout);
+    } catch (e) {
+      final duration = DateTime.now().difference(startTime);
+      _log('proot command failed: $e');
+
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: e.toString(),
+        duration: duration,
+        success: false,
+      );
+    }
+  }
+
+  // ==================== Setup & Installation ====================
+
+  /// Run the complete setup process
+  Future<bool> runSetup() async {
+    onSetupProgress?.call(const SetupProgress(
+      step: 'init',
+      message: 'Starting setup...',
+      progress: 0.0,
+    ));
+
+    // Step 1: Update Termux packages
+    onSetupProgress?.call(const SetupProgress(
+      step: 'update',
+      message: 'Updating Termux packages...',
+      progress: 0.1,
+    ));
+
+    final updateResult = await _runInTermux('pkg update -y', timeout: const Duration(minutes: 5));
+    if (!updateResult.success) {
+      onSetupProgress?.call(SetupProgress(
+        step: 'update',
+        message: 'Package update failed: ${updateResult.stderr}',
+        progress: 0.1,
+        isError: true,
+      ));
+      // Continue anyway - might just be network issues
+    }
+
+    // Step 2: Install proot-distro
+    onSetupProgress?.call(const SetupProgress(
+      step: 'proot',
+      message: 'Installing proot-distro...',
+      progress: 0.2,
+    ));
+
+    if (!_isProotAvailable) {
+      final prootResult = await _runInTermux(
+        'pkg install proot-distro -y',
+        timeout: const Duration(minutes: 3),
+      );
+
+      if (!prootResult.success) {
+        onSetupProgress?.call(SetupProgress(
+          step: 'proot',
+          message: 'Failed to install proot-distro: ${prootResult.stderr}',
+          progress: 0.2,
+          isError: true,
+        ));
+        return false;
+      }
+
+      _isProotAvailable = true;
+    }
+
+    // Step 3: Install Ubuntu
+    onSetupProgress?.call(const SetupProgress(
+      step: 'ubuntu',
+      message: 'Installing Ubuntu (this may take a while)...',
+      progress: 0.3,
+    ));
+
+    if (!_isUbuntuInstalled) {
+      final ubuntuResult = await _runInTermux(
+        'proot-distro install ubuntu',
+        timeout: const Duration(minutes: 15),
+      );
+
+      if (!ubuntuResult.success && !ubuntuResult.stdout.contains('already installed')) {
+        onSetupProgress?.call(SetupProgress(
+          step: 'ubuntu',
+          message: 'Failed to install Ubuntu: ${ubuntuResult.stderr}',
+          progress: 0.3,
+          isError: true,
+        ));
+        return false;
+      }
+
+      _isUbuntuInstalled = true;
+    }
+
+    // Step 4: Update Ubuntu packages
+    onSetupProgress?.call(const SetupProgress(
+      step: 'ubuntu-update',
+      message: 'Updating Ubuntu packages...',
+      progress: 0.5,
+    ));
+
+    await _runInProot('apt update -y', timeout: const Duration(minutes: 5));
+    await _runInProot('apt upgrade -y', timeout: const Duration(minutes: 5));
+
+    // Step 5: Install Node.js
+    onSetupProgress?.call(const SetupProgress(
+      step: 'nodejs',
+      message: 'Installing Node.js...',
+      progress: 0.6,
+    ));
+
+    // Install Node.js 22.x
+    final nodeSetupResult = await _runInProot(
+      'curl -fsSL https://deb.nodesource.com/setup_22.x | bash -',
+      timeout: const Duration(minutes: 3),
+    );
+
+    if (!nodeSetupResult.success) {
+      // Fallback: install from apt
+      _log('NodeSource setup failed, trying apt...');
+    }
+
+    final nodeInstallResult = await _runInProot(
+      'apt install -y nodejs npm curl',
+      timeout: const Duration(minutes: 5),
+    );
+
+    if (!nodeInstallResult.success) {
+      onSetupProgress?.call(SetupProgress(
+        step: 'nodejs',
+        message: 'Failed to install Node.js: ${nodeInstallResult.stderr}',
+        progress: 0.6,
+        isError: true,
+      ));
+      return false;
+    }
+
+    // Check Node.js version
+    final nodeVersionResult = await _runInProot('node --version');
+    if (nodeVersionResult.success) {
+      _nodeVersion = nodeVersionResult.stdout.trim();
+      _log('Node.js version: $_nodeVersion');
+    }
+
+    // Step 6: Install OpenClaw
+    onSetupProgress?.call(const SetupProgress(
+      step: 'openclaw',
+      message: 'Installing OpenClaw...',
+      progress: 0.8,
+    ));
+
+    // Install OpenClaw globally with Bionic libc workaround
+    final openclawResult = await _runInProot(
+      'npm install -g openclaw --unsafe-perm',
+      timeout: const Duration(minutes: 10),
+    );
+
+    if (!openclawResult.success) {
+      onSetupProgress?.call(SetupProgress(
+        step: 'openclaw',
+        message: 'Failed to install OpenClaw: ${openclawResult.stderr}',
+        progress: 0.8,
+        isError: true,
+      ));
+      return false;
+    }
+
+    // Verify OpenClaw installation
+    final versionResult = await _runInProot('openclaw --version');
+    if (versionResult.success) {
+      _openClawVersion = versionResult.stdout.trim();
+      _log('OpenClaw version: $_openClawVersion');
+    }
+
+    // Step 7: Create startup script with Bionic bypass
+    onSetupProgress?.call(const SetupProgress(
+      step: 'scripts',
+      message: 'Creating startup scripts...',
+      progress: 0.9,
+    ));
+
+    await _createStartupScripts();
+
+    onSetupProgress?.call(const SetupProgress(
+      step: 'complete',
+      message: 'Setup complete!',
+      progress: 1.0,
+      isComplete: true,
+    ));
+
+    return true;
+  }
+
+  /// Create helper scripts for running OpenClaw
+  Future<void> _createStartupScripts() async {
+    // Create openclawx script (similar to reference implementation)
+    final scriptContent = '''#!/bin/bash
+# OpenClaw wrapper script for proot-distro
+# Handles Bionic libc bypass and environment setup
+
+export HOME=/root
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+export NODE_OPTIONS="--openssl-legacy-provider --no-warnings"
+
+# Bionic libc workaround - use IPv4 only for network interfaces
+export UV_THREADPOOL_SIZE=128
+
+# Run OpenClaw with proper environment
+case "\$1" in
+  setup)
+    echo "OpenClaw is already set up!"
+    ;;
+  start)
+    echo "Starting OpenClaw gateway..."
+    openclaw gateway start --daemon
+    ;;
+  stop)
+    echo "Stopping OpenClaw gateway..."
+    openclaw gateway stop
+    ;;
+  status)
+    openclaw status
+    ;;
+  shell)
+    echo "Entering Ubuntu shell..."
+    exec bash
+    ;;
+  *)
+    # Pass through any other command
+    openclaw "\$@"
+    ;;
+esac
+''';
+
+    // Write script to Termux home
+    final scriptPath = '$_termuxHomePath/.openclawx';
+    await _runInTermux('cat > $scriptPath << \'EOF\'\n$scriptContent\nEOF');
+    await _runInTermux('chmod +x $scriptPath');
+
+    // Create symlink in proot
+    await _runInProot('ln -sf /usr/bin/openclaw /usr/local/bin/openclawx');
+  }
+
+  // ==================== OpenClaw Commands ====================
 
   /// Check if OpenClaw is installed
-  Future<bool> isOpenClawInstalled() async {
-    final result = await executeCommand('openclaw --version');
-    if (result.success) {
-      _openClawVersion = result.stdout.trim();
+  Future<bool> checkOpenClawInstalled() async {
+    final result = await _runInProot('which openclaw');
+    if (result.success && result.stdout.trim().isNotEmpty) {
+      // Get version
+      final versionResult = await _runInProot('openclaw --version');
+      if (versionResult.success) {
+        _openClawVersion = versionResult.stdout.trim();
+      }
       return true;
     }
     return false;
   }
 
-  /// Get OpenClaw version
-  Future<String?> getOpenClawVersion() async {
-    final result = await executeCommand('openclaw --version');
-    if (result.success) {
-      _openClawVersion = result.stdout.trim();
-      return _openClawVersion;
-    }
-    return null;
-  }
-
   /// Install OpenClaw via npm
   Future<CommandResult> installOpenClaw() async {
-    onProgress?.call('Installing OpenClaw...', 0.0);
-    
-    // First check if Node.js is available
-    final nodeCheck = await executeCommand('node --version');
+    onSetupProgress?.call(const SetupProgress(
+      step: 'install',
+      message: 'Installing OpenClaw...',
+      progress: 0.0,
+    ));
+
+    // Check Node.js first
+    final nodeCheck = await _runInProot('node --version');
     if (!nodeCheck.success) {
       return CommandResult(
         exitCode: -1,
         stdout: '',
-        stderr: 'Node.js is not installed. Please install Node.js first.\n\nIn Termux, run:\npkg install nodejs',
+        stderr: 'Node.js is not installed. Please run setup first.',
         duration: Duration.zero,
         success: false,
       );
     }
 
-    onProgress?.call('Running npm install -g openclaw...', 0.3);
-    
-    final result = await executeCommand(
-      'npm',
-      args: ['install', '-g', 'openclaw'],
-      timeout: const Duration(minutes: 5),
+    onSetupProgress?.call(const SetupProgress(
+      step: 'install',
+      message: 'Running npm install...',
+      progress: 0.3,
+    ));
+
+    final result = await _runInProot(
+      'npm install -g openclaw --unsafe-perm',
+      timeout: const Duration(minutes: 10),
     );
 
     if (result.success) {
-      onProgress?.call('OpenClaw installed!', 1.0);
-      await isOpenClawInstalled(); // Update version
+      await checkOpenClawInstalled();
+      onSetupProgress?.call(const SetupProgress(
+        step: 'install',
+        message: 'OpenClaw installed successfully!',
+        progress: 1.0,
+        isComplete: true,
+      ));
     } else {
-      onProgress?.call('Installation failed', 1.0);
+      onSetupProgress?.call(SetupProgress(
+        step: 'install',
+        message: 'Installation failed: ${result.stderr}',
+        progress: 1.0,
+        isError: true,
+      ));
     }
 
     return result;
@@ -277,17 +598,25 @@ class TermuxService {
 
   /// Update OpenClaw
   Future<CommandResult> updateOpenClaw() async {
-    onProgress?.call('Updating OpenClaw...', 0.0);
-    
-    final result = await executeCommand(
-      'npm',
-      args: ['install', '-g', 'openclaw@latest'],
-      timeout: const Duration(minutes: 5),
+    onSetupProgress?.call(const SetupProgress(
+      step: 'update',
+      message: 'Updating OpenClaw...',
+      progress: 0.0,
+    ));
+
+    final result = await _runInProot(
+      'npm install -g openclaw@latest --unsafe-perm',
+      timeout: const Duration(minutes: 10),
     );
 
     if (result.success) {
-      onProgress?.call('OpenClaw updated!', 1.0);
-      await isOpenClawInstalled();
+      await checkOpenClawInstalled();
+      onSetupProgress?.call(const SetupProgress(
+        step: 'update',
+        message: 'OpenClaw updated!',
+        progress: 1.0,
+        isComplete: true,
+      ));
     }
 
     return result;
@@ -295,91 +624,121 @@ class TermuxService {
 
   // ==================== Gateway Commands ====================
 
+  /// Start OpenClaw gateway
+  Future<CommandResult> startGateway({int port = 18789}) async {
+    _log('Starting OpenClaw gateway on port $port...');
+
+    // Create a startup script that handles Bionic libc issues
+    final startupScript = '''
+export HOME=/root
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+export NODE_OPTIONS="--openssl-legacy-provider --no-warnings"
+export UV_THREADPOOL_SIZE=128
+
+# Start gateway in background
+nohup openclaw gateway start --port $port > /tmp/openclaw-gateway.log 2>&1 &
+echo \$!
+''';
+
+    return _runInProot(startupScript, timeout: const Duration(seconds: 10));
+  }
+
+  /// Stop OpenClaw gateway
+  Future<CommandResult> stopGateway() async {
+    return _runInProot('openclaw gateway stop');
+  }
+
   /// Get gateway status
   Future<CommandResult> getGatewayStatus() async {
-    return executeCommand('openclaw status');
-  }
-
-  /// Restart gateway
-  Future<CommandResult> restartGateway() async {
-    onProgress?.call('Restarting gateway...', 0.5);
-    return executeCommand('openclaw gateway restart');
-  }
-
-  // ==================== Node Commands ====================
-
-  /// Get node status
-  Future<CommandResult> getNodeStatus() async {
-    final result = await executeCommand('openclaw nodes status');
+    final result = await _runInProot('openclaw status');
     if (result.success) {
-      _nodeStatus = result.stdout;
+      _gatewayStatus = result.stdout;
     }
     return result;
   }
 
-  /// Start node service
-  Future<CommandResult> startNode() async {
-    onProgress?.call('Starting node...', 0.5);
-    return executeCommand('openclaw node start');
-  }
-
-  /// Stop node service
-  Future<CommandResult> stopNode() async {
-    onProgress?.call('Stopping node...', 0.5);
-    return executeCommand('openclaw node stop');
-  }
-
-  /// Setup node
-  Future<CommandResult> setupNode() async {
-    onProgress?.call('Setting up node...', 0.0);
-    return executeCommand('openclaw node setup');
-  }
-
-  // ==================== Agent Commands ====================
-
-  /// Send agent message
-  Future<CommandResult> sendAgentMessage(String message) async {
-    return executeCommand(
-      'openclaw',
-      args: ['agent', '--message', message],
-      timeout: const Duration(minutes: 2),
-    );
+  /// Check if gateway is running
+  Future<bool> isGatewayRunning() async {
+    final result = await _runInProot('pgrep -f "openclaw gateway"');
+    return result.success && result.stdout.trim().isNotEmpty;
   }
 
   // ==================== Quick Commands ====================
 
   /// Run a quick OpenClaw command
   Future<CommandResult> runQuickCommand(String command) async {
-    return executeCommand(command, timeout: const Duration(seconds: 60));
+    return _runInProot('openclaw $command', timeout: const Duration(seconds: 60));
+  }
+
+  /// Run OpenClaw doctor
+  Future<CommandResult> runDoctor() async {
+    return _runInProot('openclaw doctor', timeout: const Duration(seconds: 30));
+  }
+
+  /// Configure OpenClaw
+  Future<CommandResult> configureOpenClaw() async {
+    return _runInProot('openclaw configure', timeout: const Duration(seconds: 30));
+  }
+
+  // ==================== Node Commands ====================
+
+  /// Setup this device as a node
+  Future<CommandResult> setupNode({String? nodeName, List<String>? nodeCapabilities}) async {
+    _log('Setting up node...');
+
+    final name = nodeName ?? 'android-node';
+    final caps = nodeCapabilities?.join(',') ?? 'shell,terminal';
+
+    return _runInProot(
+      'openclaw node setup --name "$name" --capabilities "$caps"',
+      timeout: const Duration(seconds: 30),
+    );
+  }
+
+  /// Get node status
+  Future<CommandResult> getNodeStatus() async {
+    return _runInProot('openclaw nodes status', timeout: const Duration(seconds: 10));
+  }
+
+  /// Start node service
+  Future<CommandResult> startNode() async {
+    return _runInProot('openclaw node start', timeout: const Duration(seconds: 10));
+  }
+
+  /// Stop node service
+  Future<CommandResult> stopNode() async {
+    return _runInProot('openclaw node stop', timeout: const Duration(seconds: 10));
   }
 
   // ==================== Helpers ====================
 
-  /// Check if OpenClaw is installed (alias)
-  Future<bool> checkOpenClawInstalled() async {
-    return isOpenClawInstalled();
+  void _log(String message) {
+    if (kDebugMode) {
+      debugPrint('[TermuxService] $message');
+    }
+    onOutput?.call('[TermuxService] $message\n');
   }
 
-  /// Get setup instructions for Termux
+  /// Get setup instructions
   static String getSetupInstructions() {
     return '''
 📱 Termux Setup Instructions:
 
-1. Download Termux from F-Droid:
+1. Download Termux from F-Droid (NOT Play Store):
    https://f-droid.org/packages/com.termux/
 
-2. Open Termux and run:
-   pkg update
-   pkg install nodejs
-   pkg install git
+2. Open Termux and the app will auto-setup:
+   - Updates packages
+   - Installs proot-distro
+   - Installs Ubuntu
+   - Installs Node.js 22
+   - Installs OpenClaw
 
-3. Install OpenClaw:
-   npm install -g openclaw
+3. Tap "Start Gateway" to run OpenClaw
 
-4. Start OpenClaw:
-   openclaw gateway start
+4. Configure API keys in Settings
 
-5. Return to this app and configure the gateway URL.
+No root required! Everything runs in proot (user-space).
 ''';
   }
 

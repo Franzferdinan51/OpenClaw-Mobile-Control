@@ -30,6 +30,7 @@ class AgentSession {
   final bool aborted;
   final String? avatarUrl;
   final String? identityTheme;
+  final List<String>? subagentIds;
 
   AgentSession({
     required this.id,
@@ -62,6 +63,7 @@ class AgentSession {
     this.aborted = false,
     this.avatarUrl,
     this.identityTheme,
+    this.subagentIds,
   });
 
   factory AgentSession.fromJson(Map<String, dynamic> json) {
@@ -100,6 +102,9 @@ class AgentSession {
       aborted: json['aborted'] ?? false,
       avatarUrl: json['avatarUrl'],
       identityTheme: json['identityTheme'],
+      subagentIds: json['subagentIds'] != null
+          ? List<String>.from(json['subagentIds'] as List)
+          : null,
     );
   }
 
@@ -134,6 +139,7 @@ class AgentSession {
     'aborted': aborted,
     'avatarUrl': avatarUrl,
     'identityTheme': identityTheme,
+    'subagentIds': subagentIds,
   };
 
   /// Get status display text

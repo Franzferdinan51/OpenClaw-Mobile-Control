@@ -120,7 +120,7 @@ class _AgentDashboardScreenState extends State<AgentDashboardScreen>
           indicatorColor: const Color(0xFF00D4AA),
           tabs: const [
             Tab(icon: Icon(Icons.people), text: 'Agents'),
-            Tab(icon: Icon(Icons.activity), text: 'Activity'),
+            Tab(icon: Icon(Icons.local_activity), text: 'Activity'),
             Tab(icon: Icon(Icons.leaderboard), text: 'Stats'),
           ],
         ),
@@ -596,7 +596,7 @@ class _AgentDashboardScreenState extends State<AgentDashboardScreen>
       context,
       MaterialPageRoute(
         builder: (context) => AgentDetailScreen(
-          agent: agent,
+          session: agent,
           gatewayService: _service,
         ),
       ),

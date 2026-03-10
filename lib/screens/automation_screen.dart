@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-import '../services/event_bus.dart';
 import '../services/webhook_server.dart';
 import '../services/automation_engine.dart';
 import '../services/scripting_engine.dart';

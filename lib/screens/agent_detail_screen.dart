@@ -1,37 +1,56 @@
 import 'package:flutter/material.dart';
 import '../models/agent_personality.dart';
+import '../models/agent_session.dart';
+import '../services/gateway_service.dart';
 
 /// Detail screen for a single agent
+/// Accepts either AgentPersonality (static profile) or AgentSession (live session)
 class AgentDetailScreen extends StatelessWidget {
-  final AgentPersonality agent;
+  final AgentPersonality? agent;
+  final AgentSession? session;
+  final GatewayService? gatewayService;
   final VoidCallback? onActivate;
 
   const AgentDetailScreen({
     super.key,
-    required this.agent,
+    this.agent,
+    this.session,
+    this.gatewayService,
     this.onActivate,
-  });
+  }) : assert(agent != null || session != null, 'Must provide either agent or session');
+
+  // Helper getters to unify access
+  String get _name => agent?.name ?? session?.name ?? 'Unknown';
+  String get _emoji => agent?.emoji ?? session?.emoji ?? '🤖';
+  String get _description => agent?.shortDescription ?? session?.statusSummary ?? 'Agent session';
+  String get _role => agent?.role ?? (session?.isSubagent == true ? 'Subagent' : 'Agent');
+  Color get _color => agent?.division.color ?? const Color(0xFF00D4AA);
+  String get _divisionName => agent?.division.displayName ?? (session?.isSubagent == true ? 'Subagent' : 'Primary Agent');
+  String get _divisionEmoji => agent?.division.emoji ?? (session?.isSubagent == true ? '👥' : '🤖');
 
   @override
   Widget build(BuildContext context) {
+    final isSession = session != null;
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            Text(agent.emoji),
+            Text(_emoji),
             const SizedBox(width: 8),
-            Expanded(child: Text(agent.name)),
+            Expanded(child: Text(_name)),
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.favorite_border),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('${agent.name} added to favorites!')),
-              );
-            },
-          ),
+          if (!isSession)
+            IconButton(
+              icon: const Icon(Icons.favorite_border),
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$_name added to favorites!')),
+                );
+              },
+            ),
         ],
       ),
       body: SingleChildScrollView(
@@ -52,12 +71,12 @@ class AgentDetailScreen extends StatelessWidget {
                           width: 64,
                           height: 64,
                           decoration: BoxDecoration(
-                            color: agent.division.color.withValues(alpha: 0.2),
+                            color: _color.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(16),
                           ),
                           child: Center(
                             child: Text(
-                              agent.emoji,
+                              _emoji,
                               style: const TextStyle(fontSize: 32),
                             ),
                           ),
@@ -68,7 +87,7 @@ class AgentDetailScreen extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                agent.role,
+                                _role,
                                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -80,13 +99,13 @@ class AgentDetailScreen extends StatelessWidget {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: agent.division.color.withValues(alpha: 0.2),
+                                  color: _color.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  '${agent.division.emoji} ${agent.division.displayName}',
+                                  '$_divisionEmoji $_divisionName',
                                   style: TextStyle(
-                                    color: agent.division.color,
+                                    color: _color,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -98,7 +117,7 @@ class AgentDetailScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      agent.shortDescription,
+                      _description,
                       style: Theme.of(context).textTheme.bodyLarge,
                     ),
                   ],
@@ -108,54 +127,63 @@ class AgentDetailScreen extends StatelessWidget {
 
             const SizedBox(height: 16),
 
-            // Communication style
-            _buildSection(
-              context,
-              '💬 Communication Style',
-              agent.communicationStyle,
-            ),
+            // Session-specific info
+            if (isSession && session != null) ...[
+              _buildSessionInfoCard(context, session!),
+              const SizedBox(height: 16),
+            ],
 
-            // Specialties
-            _buildSection(
-              context,
-              '🎯 Specialties',
-              agent.specialties.map((s) => '• $s').join('\n'),
-            ),
-
-            // Workflows
-            _buildSection(
-              context,
-              '🔄 Workflow',
-              agent.workflows.join('\n'),
-            ),
-
-            // Deliverables
-            _buildSection(
-              context,
-              '📦 Deliverables',
-              agent.deliverables.map((d) => '• $d').join('\n'),
-            ),
-
-            // Success metrics
-            _buildSection(
-              context,
-              '✅ Success Metrics',
-              agent.successMetrics.map((m) => '• $m').join('\n'),
-            ),
-
-            // Example phrases
-            if (agent.examplePhrases.isNotEmpty)
+            // Personality-specific sections
+            if (agent != null) ...[
+              // Communication style
               _buildSection(
                 context,
-                '🗣️ Example Phrases',
-                agent.examplePhrases.entries
-                    .map((e) => '"${e.key}": ${e.value}')
-                    .join('\n'),
+                '💬 Communication Style',
+                agent!.communicationStyle,
               ),
+
+              // Specialties
+              _buildSection(
+                context,
+                '🎯 Specialties',
+                agent!.specialties.map((s) => '• $s').join('\n'),
+              ),
+
+              // Workflows
+              _buildSection(
+                context,
+                '🔄 Workflow',
+                agent!.workflows.join('\n'),
+              ),
+
+              // Deliverables
+              _buildSection(
+                context,
+                '📦 Deliverables',
+                agent!.deliverables.map((d) => '• $d').join('\n'),
+              ),
+
+              // Success metrics
+              _buildSection(
+                context,
+                '✅ Success Metrics',
+                agent!.successMetrics.map((m) => '• $m').join('\n'),
+              ),
+
+              // Example phrases
+              if (agent!.examplePhrases.isNotEmpty)
+                _buildSection(
+                  context,
+                  '🗣️ Example Phrases',
+                  agent!.examplePhrases.entries
+                      .map((e) => '"${e.key}": ${e.value}')
+                      .join('\n'),
+                ),
+            ],
 
             const SizedBox(height: 24),
 
-            // Activate button
+            // Action button
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -165,17 +193,17 @@ class AgentDetailScreen extends StatelessWidget {
                   }
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('${agent.name} activated!'),
-                      backgroundColor: agent.division.color,
+                      content: Text('$_name activated!'),
+                      backgroundColor: _color,
                     ),
                   );
                   Navigator.pop(context);
                 },
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('Activate Agent'),
+                label: Text(isSession ? 'Chat with Agent' : 'Activate Agent'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: agent.division.color,
+                  backgroundColor: _color,
                 ),
               ),
             ),
@@ -183,6 +211,64 @@ class AgentDetailScreen extends StatelessWidget {
             const SizedBox(height: 16),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSessionInfoCard(BuildContext context, AgentSession session) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Session Info',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildInfoRow('Model', session.model),
+            _buildInfoRow('Channel', session.channel),
+            _buildInfoRow('Kind', session.kind),
+            if (session.currentToolName != null)
+              _buildInfoRow('Current Tool', session.currentToolName!),
+            if (session.usageKnown) ...[
+              const SizedBox(height: 8),
+              _buildInfoRow('Input Tokens', '${session.inputTokens}'),
+              _buildInfoRow('Output Tokens', '${session.outputTokens}'),
+              _buildInfoRow('Total Tokens', '${session.totalTokens}'),
+            ],
+            _buildInfoRow('Active', session.isActive ? 'Yes' : 'No'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ],
       ),
     );
   }

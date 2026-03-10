@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29,7 +30,7 @@ class DiscoveryLogEntry {
 
   @override
   String toString() {
-    final time = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}.${timestamp.millisecond.toString().padLeft(3, '0')}';
+    final time = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
     final icon = {
       'info': 'ℹ️',
       'success': '✅',
@@ -41,14 +42,62 @@ class DiscoveryLogEntry {
   }
 }
 
+/// Parameters for scanning a single IP
+class _ScanIpParams {
+  final String ip;
+  final int port;
+  final int timeoutMs;
+
+  _ScanIpParams({
+    required this.ip,
+    required this.port,
+    required this.timeoutMs,
+  });
+}
+
+/// Result from IP scan
+class _ScanResult {
+  final String ip;
+  final bool found;
+  final String? url;
+  final String? name;
+  final String? error;
+
+  _ScanResult({
+    required this.ip,
+    required this.found,
+    this.url,
+    this.name,
+    this.error,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'ip': ip,
+    'found': found,
+    'url': url,
+    'name': name,
+    'error': error,
+  };
+
+  factory _ScanResult.fromJson(Map<String, dynamic> json) => _ScanResult(
+    ip: json['ip'] as String,
+    found: json['found'] as bool,
+    url: json['url'] as String?,
+    name: json['name'] as String?,
+    error: json['error'] as String?,
+  );
+}
+
 /// Service for discovering OpenClaw gateways on the local network
-/// 
-/// IMPLEMENTATION NOTES (from studying reference repos):
+///
+/// IMPLEMENTATION NOTES:
 /// - mDNS is a CONVENIENCE feature, not primary connection method
 /// - Manual entry with IP:port is the MOST RELIABLE method
 /// - Android Bionic libc can cause issues with networkInterfaces()
 /// - Localhost (127.0.0.1) binding is used when gateway runs on device
 /// - Network scanning is a fallback when mDNS fails
+/// - OpenClaw gateway /health endpoint returns {"ok":true,"status":"live"}
+/// - Parallel scanning using isolates for performance
 class DiscoveryService {
   // OpenClaw gateway advertises as _openclaw-gw._tcp
   static const String _serviceType = '_openclaw-gw._tcp';
@@ -58,10 +107,16 @@ class DiscoveryService {
   static const Duration _scanTimeout = Duration(seconds: 8);
   static const Duration _connectionTimeout = Duration(seconds: 5);
 
+  // Scanning configuration
+  static const int _isolateBatchSize = 25; // IPs per batch
+  static const int _ipTimeoutMs = 500; // Timeout per IP check
+
   MDnsClient? _mdnsClient;
   Timer? _backgroundScanTimer;
   bool _isScanning = false;
   bool _isDisposed = false;
+  int _totalIpsToScan = 0;
+  int _ipsScanned = 0;
 
   // Debug logging
   final List<DiscoveryLogEntry> _logs = [];
@@ -72,6 +127,9 @@ class DiscoveryService {
   final StreamController<List<GatewayConnection>> _discoveredController =
       StreamController<List<GatewayConnection>>.broadcast();
 
+  final StreamController<ScanProgress> _progressController =
+      StreamController<ScanProgress>.broadcast();
+
   /// Stream of discovered gateways
   Stream<List<GatewayConnection>> get discoveredGateways =>
       _discoveredController.stream;
@@ -79,12 +137,22 @@ class DiscoveryService {
   /// Stream of discovery logs
   Stream<List<DiscoveryLogEntry>> get logs => _logsController.stream;
 
+  /// Stream of scan progress
+  Stream<ScanProgress> get scanProgress => _progressController.stream;
+
   /// Current list of discovered gateways
   List<GatewayConnection> _discovered = [];
   List<GatewayConnection> get discovered => List.unmodifiable(_discovered);
 
   /// Get all logs
   List<DiscoveryLogEntry> get allLogs => List.unmodifiable(_logs);
+
+  /// Check if currently scanning
+  bool get isScanning => _isScanning;
+
+  /// Get scan progress percentage (0-100)
+  int get scanProgressPercent =>
+      _totalIpsToScan > 0 ? (_ipsScanned * 100 ~/ _totalIpsToScan) : 0;
 
   /// Add a log entry
   void _log(String level, String message, {String? details}) {
@@ -133,7 +201,7 @@ class DiscoveryService {
     return buffer.toString();
   }
 
-  /// Start background scanning (every 60 seconds - less aggressive)
+  /// Start background scanning (every 60 seconds)
   void startBackgroundScan() {
     if (_isDisposed) return;
 
@@ -158,11 +226,12 @@ class DiscoveryService {
   }
 
   /// Scan for OpenClaw gateways on the local network
-  /// 
-  /// PRIORITY ORDER (based on reference implementations):
+  ///
+  /// PRIORITY ORDER:
   /// 1. mDNS/Bonjour discovery (if available)
-  /// 2. Localhost check (127.0.0.1:18789) - for on-device gateway
+  /// 2. Local subnet scanning (all IPs in detected subnets)
   /// 3. Common network ranges scan (fallback)
+  /// 4. Tailscale network scan
   Future<List<GatewayConnection>> scan() async {
     if (_isDisposed) return _discovered;
 
@@ -172,15 +241,20 @@ class DiscoveryService {
     }
 
     _isScanning = true;
+    _ipsScanned = 0;
+    _totalIpsToScan = 0;
     clearLogs();
-    _log('info', '🔍 Starting gateway discovery...', 
+    _log('info', '🔍 Starting comprehensive gateway discovery...',
         details: 'Service type: $_serviceType');
+
+    _updateProgress(0, 0, 'Starting scan...');
 
     final List<GatewayConnection> found = [];
 
     try {
       // STEP 1: Check localhost first (fastest - for on-device gateway)
       _log('info', 'Step 1: Checking localhost (127.0.0.1:18789)');
+      _updateProgress(0, 1, 'Checking localhost...');
       final localhostGateway = await _checkLocalhost();
       if (localhostGateway != null) {
         found.add(localhostGateway);
@@ -189,6 +263,7 @@ class DiscoveryService {
 
       // STEP 2: Try mDNS discovery
       _log('info', 'Step 2: Starting mDNS discovery');
+      _updateProgress(0, 1, 'Scanning mDNS...');
       try {
         final mdnsGateways = await _scanMdns();
         for (final gateway in mdnsGateways) {
@@ -201,29 +276,55 @@ class DiscoveryService {
         _log('warning', 'mDNS discovery failed', details: e.toString());
       }
 
-      // STEP 3: Network scan fallback (if mDNS found nothing new)
+      // STEP 3: Scan local subnets comprehensively
+      _log('info', 'Step 3: Scanning local subnets');
+      _updateProgress(0, 0, 'Scanning local subnets...');
+      final localGateways = await _scanLocalSubnets();
+      for (final gateway in localGateways) {
+        if (!found.any((g) => g.url == gateway.url)) {
+          found.add(gateway);
+          _log('success', 'Gateway found on local subnet', details: gateway.url);
+        }
+      }
+
+      // STEP 4: Scan common network ranges as fallback
       if (found.isEmpty) {
-        _log('warning', 'No gateways found yet, trying network scan');
-        final networkGateways = await _scanCommonNetworks();
-        for (final gateway in networkGateways) {
+        _log('info', 'Step 4: Scanning common network ranges');
+        _updateProgress(0, 0, 'Scanning common ranges...');
+        final commonGateways = await _scanCommonNetworks();
+        for (final gateway in commonGateways) {
           if (!found.any((g) => g.url == gateway.url)) {
             found.add(gateway);
-            _log('success', 'Gateway found via network scan', details: gateway.url);
+            _log('success', 'Gateway found in common range', details: gateway.url);
           }
+        }
+      }
+
+      // STEP 5: Scan Tailscale network
+      _log('info', 'Step 5: Scanning Tailscale network');
+      _updateProgress(0, 0, 'Scanning Tailscale...');
+      final tailscaleGateways = await _scanTailscale();
+      for (final gateway in tailscaleGateways) {
+        if (!found.any((g) => g.url == gateway.url)) {
+          found.add(gateway);
+          _log('success', 'Gateway found via Tailscale', details: gateway.url);
         }
       }
 
       _discovered = found;
       if (found.isNotEmpty) {
-        _log('success', 'Discovery complete!', 
+        _log('success', 'Discovery complete!',
             details: '${found.length} gateway(s) found: ${found.map((g) => g.url).join(", ")}');
+        _updateProgress(100, _totalIpsToScan, 'Found ${found.length} gateway(s)!');
       } else {
-        _log('warning', 'Discovery complete - no gateways found', 
+        _log('warning', 'Discovery complete - no gateways found',
             details: 'Use Manual tab to enter gateway IP directly');
+        _updateProgress(100, _totalIpsToScan, 'No gateways found');
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       _log('error', 'Discovery error', details: '$e');
       _discovered = found;
+      _updateProgress(100, _totalIpsToScan, 'Error: $e');
     } finally {
       _isScanning = false;
       try {
@@ -240,12 +341,24 @@ class DiscoveryService {
     return _discovered;
   }
 
+  /// Update scan progress
+  void _updateProgress(int percent, int scanned, String status) {
+    if (!_progressController.isClosed) {
+      _progressController.add(ScanProgress(
+        percent: percent,
+        scanned: scanned,
+        total: _totalIpsToScan,
+        status: status,
+      ));
+    }
+  }
+
   /// Check localhost for on-device gateway
   Future<GatewayConnection?> _checkLocalhost() async {
     return await _quickCheckGateway('127.0.0.1', 18789, name: 'Local Gateway (This Device)');
   }
 
-  /// Scan using mDNS/Bonjour
+  /// Scan using mDNS/Bonjour with improved Android compatibility
   Future<List<GatewayConnection>> _scanMdns() async {
     final List<GatewayConnection> found = [];
 
@@ -277,7 +390,7 @@ class DiscoveryService {
       );
       _log('success', 'mDNS client started');
 
-      // Query for PTR records
+      // Query for PTR records with shorter timeout
       _log('info', 'Querying mDNS PTR records...');
       final ptrRecords = await _queryPtrRecords();
       _log('info', 'PTR query complete', details: 'Found ${ptrRecords.length} service(s)');
@@ -414,14 +527,14 @@ class DiscoveryService {
     return '';
   }
 
-  /// Scan common network ranges
-  Future<List<GatewayConnection>> _scanCommonNetworks() async {
+  /// Scan ALL IPs in detected local subnets using parallel isolates
+  Future<List<GatewayConnection>> _scanLocalSubnets() async {
     final List<GatewayConnection> found = [];
 
-    _log('info', 'Scanning common network ranges...');
+    _log('info', 'Detecting local network interfaces...');
 
-    // Get local IP to determine subnet
-    String? localSubnet;
+    // Get all network interfaces
+    final List<String> subnets = [];
     try {
       final interfaces = await NetworkInterface.list(
         includeLinkLocal: false,
@@ -436,94 +549,266 @@ class DiscoveryService {
               final firstOctet = int.parse(parts[0]);
               // Skip link-local and special ranges
               if (firstOctet == 127 || firstOctet == 169) continue;
-              
-              localSubnet = '${parts[0]}.${parts[1]}.${parts[2]}';
-              _log('debug', 'Local subnet detected: $localSubnet.x');
-              break;
+
+              final subnet = '${parts[0]}.${parts[1]}.${parts[2]}';
+              if (!subnets.contains(subnet)) {
+                subnets.add(subnet);
+                _log('debug', 'Detected subnet: $subnet.x (${interface.name})');
+              }
             }
           }
         }
-        if (localSubnet != null) break;
       }
     } catch (e) {
-      _log('warning', 'Error detecting local subnet', details: e.toString());
+      _log('warning', 'Error detecting network interfaces', details: e.toString());
     }
 
-    // Build list of IPs to scan
+    if (subnets.isEmpty) {
+      _log('warning', 'No local subnets detected');
+      return found;
+    }
+
+    // Build list of ALL IPs to scan in detected subnets
     final List<String> ipsToScan = [];
-
-    // 1. Local subnet if detected
-    if (localSubnet != null) {
-      final commonIds = [1, 2, 10, 50, 100, 101, 150, 200, 254];
-      for (final id in commonIds) {
-        ipsToScan.add('$localSubnet.$id');
+    for (final subnet in subnets) {
+      for (int i = 1; i <= 254; i++) {
+        ipsToScan.add('$subnet.$i');
       }
     }
 
-    // 2. Common default subnets
-    final commonSubnets = ['192.168.0', '192.168.1', '192.168.2', '10.0.0'];
-    for (final subnet in commonSubnets) {
-      final commonIds = [1, 2, 10, 50, 100, 101, 150, 200, 254];
-      for (final id in commonIds) {
-        final ip = '$subnet.$id';
-        if (!ipsToScan.contains(ip)) {
-          ipsToScan.add(ip);
+    _log('info', 'Scanning ${ipsToScan.length} IPs across ${subnets.length} subnet(s)');
+    _totalIpsToScan += ipsToScan.length;
+
+    // Scan using parallel isolates
+    final results = await _scanIPsInParallel(ipsToScan, port: 18789);
+
+    for (final result in results) {
+      if (result.found && result.url != null) {
+        final gateway = GatewayConnection(
+          name: result.name ?? 'OpenClaw (${result.ip})',
+          url: result.url!,
+          ip: result.ip,
+          port: 18789,
+          isOnline: true,
+        );
+        if (!found.any((g) => g.url == gateway.url)) {
+          found.add(gateway);
         }
       }
     }
 
-    // 3. Tailscale range (sample)
-    for (int i = 64; i <= 127; i += 32) {
-      for (int j = 1; j <= 50; j += 10) {
-        final ip = '100.$i.$j.1';
-        if (!ipsToScan.contains(ip)) {
-          ipsToScan.add(ip);
-        }
-      }
-    }
-
-    _log('info', 'Scanning ${ipsToScan.length} IPs...');
-
-    // Scan in parallel batches
-    const batchSize = 8;
-    for (int i = 0; i < ipsToScan.length; i += batchSize) {
-      final batch = ipsToScan.skip(i).take(batchSize).toList();
-      final futures = batch.map((ip) => _quickCheckGateway(ip, 18789)).toList();
-      final results = await Future.wait(futures);
-
-      for (final result in results) {
-        if (result != null && !found.any((g) => g.url == result.url)) {
-          found.add(result);
-          _log('success', 'Gateway found!', details: result.url);
-        }
-      }
-    }
-
-    if (found.isEmpty) {
-      _log('warning', 'Network scan complete - no gateways found');
-    } else {
-      _log('success', 'Network scan complete', details: 'Found ${found.length} gateway(s)');
-    }
-
+    _log('info', 'Local subnet scan complete', details: 'Found ${found.length} gateway(s)');
     return found;
   }
 
-  /// Quick check if a host is running OpenClaw
+  /// Scan common network ranges (fallback when subnet detection fails)
+  Future<List<GatewayConnection>> _scanCommonNetworks() async {
+    final List<GatewayConnection> found = [];
+
+    _log('info', 'Scanning common network ranges...');
+
+    // Build list of IPs to scan - common gateway positions
+    final List<String> ipsToScan = [];
+
+    // Common subnets with likely gateway positions
+    final commonSubnets = ['192.168.0', '192.168.1', '192.168.2', '10.0.0', '10.0.1'];
+    final commonIds = [1, 2, 10, 50, 100, 101, 150, 200, 254];
+
+    for (final subnet in commonSubnets) {
+      for (final id in commonIds) {
+        ipsToScan.add('$subnet.$id');
+      }
+    }
+
+    _log('info', 'Scanning ${ipsToScan.length} IPs in common ranges');
+    _totalIpsToScan += ipsToScan.length;
+
+    // Scan using parallel isolates
+    final results = await _scanIPsInParallel(ipsToScan, port: 18789);
+
+    for (final result in results) {
+      if (result.found && result.url != null) {
+        final gateway = GatewayConnection(
+          name: result.name ?? 'OpenClaw (${result.ip})',
+          url: result.url!,
+          ip: result.ip,
+          port: 18789,
+          isOnline: true,
+        );
+        if (!found.any((g) => g.url == gateway.url)) {
+          found.add(gateway);
+        }
+      }
+    }
+
+    _log('info', 'Common range scan complete', details: 'Found ${found.length} gateway(s)');
+    return found;
+  }
+
+  /// Scan Tailscale network range (100.64.0.0 - 100.127.255.255)
+  Future<List<GatewayConnection>> _scanTailscale() async {
+    final List<GatewayConnection> found = [];
+
+    _log('info', 'Scanning Tailscale network...');
+
+    // Build list of IPs to scan - focus on common Tailscale ranges
+    // Tailscale uses 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
+    // We'll scan a representative sample to keep scan time reasonable
+    final List<String> ipsToScan = [];
+
+    // Scan common Tailscale ranges (sample every 32 IPs to reduce scan time)
+    for (int i = 64; i <= 127; i++) {
+      for (int j = 0; j <= 255; j += 8) { // Sample every 8th
+        for (int k = 1; k <= 254; k += 32) { // Sample every 32nd
+          ipsToScan.add('100.$i.$j.$k');
+        }
+      }
+    }
+
+    // Also scan some common Tailscale gateway positions
+    for (int i = 64; i <= 127; i++) {
+      ipsToScan.add('100.$i.0.1');
+      ipsToScan.add('100.$i.1.1');
+    }
+
+    // Remove duplicates
+    final uniqueIps = ipsToScan.toSet().toList();
+
+    _log('info', 'Scanning ${uniqueIps.length} IPs in Tailscale range');
+    _totalIpsToScan += uniqueIps.length;
+
+    // Scan using parallel isolates
+    final results = await _scanIPsInParallel(uniqueIps, port: 18789);
+
+    for (final result in results) {
+      if (result.found && result.url != null) {
+        final gateway = GatewayConnection(
+          name: result.name ?? 'OpenClaw Tailscale (${result.ip})',
+          url: result.url!,
+          ip: result.ip,
+          port: 18789,
+          isOnline: true,
+        );
+        if (!found.any((g) => g.url == gateway.url)) {
+          found.add(gateway);
+        }
+      }
+    }
+
+    _log('info', 'Tailscale scan complete', details: 'Found ${found.length} gateway(s)');
+    return found;
+  }
+
+  /// Scan IPs in parallel using compute()
+  Future<List<_ScanResult>> _scanIPsInParallel(List<String> ips, {required int port}) async {
+    final List<_ScanResult> allResults = [];
+
+    _log('debug', 'Scanning ${ips.length} IPs in parallel using compute()');
+
+    // Process IPs in batches to avoid overwhelming the system
+    for (int i = 0; i < ips.length; i += _isolateBatchSize) {
+      final batch = ips.skip(i).take(_isolateBatchSize).toList();
+
+      // Create futures for each IP in the batch
+      final futures = batch.map((ip) => compute<_ScanIpParams, Map<String, dynamic>>(
+        _checkGatewayIsolate,
+        _ScanIpParams(ip: ip, port: port, timeoutMs: _ipTimeoutMs),
+      ));
+
+      // Wait for all scans in this batch
+      final results = await Future.wait(futures);
+
+      // Convert results back to _ScanResult objects
+      for (final resultJson in results) {
+        final result = _ScanResult.fromJson(resultJson);
+        allResults.add(result);
+      }
+
+      // Update progress
+      _ipsScanned += batch.length;
+      final percent = _totalIpsToScan > 0 ? (_ipsScanned * 100 ~/ _totalIpsToScan) : 0;
+      _updateProgress(percent, _ipsScanned, 'Scanned $_ipsScanned/$_totalIpsToScan IPs...');
+
+      // Small delay to prevent overwhelming the system
+      await Future.delayed(const Duration(milliseconds: 10));
+    }
+
+    return allResults;
+  }
+
+  /// Isolate function for checking a single gateway
+  /// This runs in a separate isolate using compute()
+  static Future<Map<String, dynamic>> _checkGatewayIsolate(_ScanIpParams params) async {
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = Duration(milliseconds: params.timeoutMs);
+
+      final request = await client.getUrl(Uri.parse('http://${params.ip}:${params.port}/health'));
+      final response = await request.close().timeout(
+        Duration(milliseconds: params.timeoutMs),
+      );
+
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        try {
+          final json = jsonDecode(body);
+          if (json['ok'] == true) {
+            return _ScanResult(
+              ip: params.ip,
+              found: true,
+              url: 'http://${params.ip}:${params.port}',
+              name: 'OpenClaw Gateway (${params.ip})',
+            ).toJson();
+          }
+        } catch (e) {
+          // Not valid JSON, but 200 OK - might still be valid
+          return _ScanResult(
+            ip: params.ip,
+            found: true,
+            url: 'http://${params.ip}:${params.port}',
+            name: 'OpenClaw Gateway (${params.ip})',
+          ).toJson();
+        }
+      }
+      return _ScanResult(ip: params.ip, found: false).toJson();
+    } on TimeoutException {
+      return _ScanResult(ip: params.ip, found: false, error: 'Timeout').toJson();
+    } catch (e) {
+      return _ScanResult(ip: params.ip, found: false, error: e.toString()).toJson();
+    }
+  }
+
+  /// Quick check if a host is running OpenClaw (non-isolate version)
   Future<GatewayConnection?> _quickCheckGateway(String ip, int port, {String? name}) async {
     try {
       final url = 'http://$ip:$port';
       final response = await http.get(
-        Uri.parse('$url/api/mobile/status'),
+        Uri.parse('$url/health'),
       ).timeout(const Duration(milliseconds: 1000));
 
       if (response.statusCode == 200) {
-        return GatewayConnection(
-          name: name ?? 'OpenClaw ($ip)',
-          url: url,
-          ip: ip,
-          port: port,
-          isOnline: true,
-        );
+        // Validate it's actually an OpenClaw gateway
+        try {
+          final json = jsonDecode(response.body);
+          if (json['ok'] == true || json['status'] == 'live') {
+            return GatewayConnection(
+              name: name ?? 'OpenClaw ($ip)',
+              url: url,
+              ip: ip,
+              port: port,
+              isOnline: true,
+            );
+          }
+        } catch (e) {
+          // Not valid JSON, but 200 OK might still be valid
+          return GatewayConnection(
+            name: name ?? 'OpenClaw ($ip)',
+            url: url,
+            ip: ip,
+            port: port,
+            isOnline: true,
+          );
+        }
       }
     } catch (e) {
       // Connection failed - don't log every failure to avoid spam
@@ -543,29 +828,125 @@ class DiscoveryService {
         .replaceAll('._openclaw', '');
   }
 
-  /// Test connection to a gateway
-  Future<bool> testConnection(GatewayConnection gateway) async {
+  /// Test connection to a gateway with detailed diagnostics
+  Future<Map<String, dynamic>> testConnection(GatewayConnection gateway) async {
     _log('info', 'Testing connection to ${gateway.url}');
-    try {
-      final url = gateway.url;
-      final response = await http.get(
-        Uri.parse('$url/api/mobile/status'),
-        headers: {
-          if (gateway.token != null) 'Authorization': 'Bearer ${gateway.token}',
-        },
-      ).timeout(_connectionTimeout);
 
-      final success = response.statusCode == 200;
-      if (success) {
-        _log('success', 'Connection test passed for ${gateway.url}');
-      } else {
-        _log('error', 'Connection test failed', details: 'HTTP ${response.statusCode}');
+    final endpoints = ['/health', '/api/health', '/status'];
+    final errors = <String>[];
+
+    for (final endpoint in endpoints) {
+      try {
+        final url = '${gateway.url}$endpoint';
+        _log('debug', 'Trying endpoint: $url');
+
+        final response = await http.get(
+          Uri.parse(url),
+          headers: gateway.token != null
+              ? {'Authorization': 'Bearer ${gateway.token}'}
+              : {},
+        ).timeout(_connectionTimeout);
+
+        if (response.statusCode == 200) {
+          _log('success', 'Connection test passed for ${gateway.url}');
+          return {
+            'success': true,
+            'endpoint': endpoint,
+            'url': url,
+          };
+        } else {
+          errors.add('$endpoint: HTTP ${response.statusCode}');
+        }
+      } on SocketException catch (e) {
+        final errorMsg = _parseSocketError(e);
+        errors.add('$endpoint: $errorMsg');
+        _log('error', 'Socket error for $endpoint', details: errorMsg);
+      } on TimeoutException {
+        errors.add('$endpoint: Timeout');
+        _log('warning', 'Timeout for $endpoint');
+      } catch (e) {
+        errors.add('$endpoint: ${e.toString()}');
+        _log('error', 'Error for $endpoint', details: e.toString());
       }
-      return success;
-    } catch (e) {
-      _log('error', 'Connection test failed for ${gateway.url}', details: e.toString());
-      return false;
     }
+
+    _log('error', 'Connection test failed for ${gateway.url}');
+    return {
+      'success': false,
+      'error': _getUserFriendlyError(errors),
+      'details': errors.join('\n'),
+      'endpoints_tried': endpoints,
+    };
+  }
+
+  /// Parse socket error into user-friendly message
+  String _parseSocketError(SocketException e) {
+    final message = e.message.toLowerCase();
+    final osErrorMessage = e.osError?.message;
+    final osError = osErrorMessage?.toLowerCase() ?? '';
+
+    if (message.contains('no route to host') || osError.contains('no route to host')) {
+      return 'No route to host - Gateway unreachable';
+    }
+
+    if (message.contains('connection refused') || osError.contains('connection refused')) {
+      return 'Connection refused - Gateway not listening';
+    }
+
+    if (message.contains('network is unreachable') || osError.contains('network is unreachable')) {
+      return 'Network unreachable - Check WiFi connection';
+    }
+
+    if (message.contains('timed out') || message.contains('timeout')) {
+      return 'Connection timed out';
+    }
+
+    return e.message;
+  }
+
+  /// Get user-friendly error message from list of errors
+  String _getUserFriendlyError(List<String> errors) {
+    // Check for specific error patterns
+    for (final error in errors) {
+      if (error.contains('No route to host')) {
+        return '''No route to host - The gateway is unreachable.
+
+Troubleshooting:
+1. Check that OpenClaw gateway is running:
+   openclaw gateway status
+
+2. Verify gateway is bound to LAN (not just localhost):
+   openclaw gateway run --bind lan
+
+3. Ensure phone and gateway are on the same network
+
+4. Check firewall settings - port 18789 must be open''';
+      }
+
+      if (error.contains('Connection refused')) {
+        return '''Connection refused - Gateway not listening.
+
+Troubleshooting:
+1. Start the gateway:
+   openclaw gateway run
+
+2. Check if port 18789 is in use:
+   lsof -i :18789
+
+3. Try a different port:
+   openclaw gateway run --port 18790''';
+      }
+
+      if (error.contains('Network unreachable')) {
+        return 'Network unreachable - Check that your phone is connected to WiFi';
+      }
+
+      if (error.contains('Timeout')) {
+        return 'Connection timed out - Gateway may be slow or unreachable. Try again.';
+      }
+    }
+
+    return 'Could not connect to gateway. Check the debug logs for details.';
   }
 
   /// Get connection history from storage
@@ -662,6 +1043,7 @@ class DiscoveryService {
     stopBackgroundScan();
     _discoveredController.close();
     _logsController.close();
+    _progressController.close();
     try {
       _mdnsClient?.stop();
     } catch (e) {
@@ -669,6 +1051,24 @@ class DiscoveryService {
     }
     _mdnsClient = null;
   }
+}
+
+/// Scan progress information
+class ScanProgress {
+  final int percent;
+  final int scanned;
+  final int total;
+  final String status;
+
+  ScanProgress({
+    required this.percent,
+    required this.scanned,
+    required this.total,
+    required this.status,
+  });
+
+  @override
+  String toString() => 'ScanProgress($percent%, $scanned/$total, $status)';
 }
 
 // Helper for debug printing

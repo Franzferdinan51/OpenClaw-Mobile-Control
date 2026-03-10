@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../models/gateway_status.dart';
 
 /// Dialog shown when gateway connection is successful during setup
 class ConnectionSuccessDialog extends StatelessWidget {

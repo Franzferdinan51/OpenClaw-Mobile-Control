@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/agent_personality.dart';
 import '../data/agency_agents.dart';
-import 'agent_detail_screen.dart';
 
 /// Screen for selecting an agent for current task
 class AgentSelectorScreen extends StatefulWidget {
