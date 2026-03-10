@@ -826,3 +826,185 @@ Create a guided setup script for Termux that:
 - Make sure mDNS is enabled: `openclaw config set discovery.mdns.mode on`
 - Make sure devices are on same WiFi network
 
+
+---
+
+## 🐛 CRITICAL BUGS FOUND (2026-03-10) - IDEA MODE WEEK
+
+**Status:** 📝 Documented for future implementation  
+**Week 1:** Idea/Planning mode (low usage)  
+**Week 2+:** Implementation begins
+
+### P0 - CRITICAL (Chat Completely Broken)
+
+| Bug | Description | Impact | Status |
+|-----|-------------|--------|--------|
+| **BUG-CHAT-001** | Chat doesn't work at all - messages don't send | 🔴 CRITICAL | 📝 Documented |
+| **BUG-CHAT-002** | Agent doesn't respond at all - complete silence | 🔴 CRITICAL | 📝 Documented |
+| **BUG-CHAT-003** | Send button searches agent identities instead of sending | 🔴 CRITICAL | 📝 Documented |
+
+**Root Cause (Hypothesis):**
+- WebSocket connection not established
+- Wrong endpoint being called
+- Send button bound to wrong function
+- Authentication not working
+- Message format incorrect
+
+**Files to Investigate:**
+- `lib/screens/chat_screen.dart`
+- `lib/services/chat_service.dart`
+- `lib/services/gateway_service.dart` (WebSocket)
+- `lib/services/gateway_ws_service.dart`
+
+**Fix Priority:** Week 2 (Critical)
+
+---
+
+### P1 - HIGH (Poor UX)
+
+| Bug | Description | Impact | Status |
+|-----|-------------|--------|--------|
+| **BUG-CHAT-004** | Chat UI/UX is terrible - confusing layout | 🟠 HIGH | 📝 Documented |
+| **BUG-CHAT-005** | No message history display | 🟠 HIGH | 📝 Documented |
+| **BUG-CHAT-006** | No typing indicators | 🟠 HIGH | 📝 Documented |
+| **BUG-CHAT-007** | No error feedback | 🟠 HIGH | 📝 Documented |
+
+**Expected:**
+- Modern chat interface
+- Message bubbles (user/agent)
+- Timestamps
+- Typing indicators
+- Error messages
+- Clean, intuitive design
+
+**Fix Priority:** Week 2-3 (High)
+
+---
+
+### P2 - MEDIUM (Agent Issues)
+
+| Bug | Description | Impact | Status |
+|-----|-------------|--------|--------|
+| **BUG-AGENT-001** | Main agent should be regular unmodified OpenClaw | 🟡 MEDIUM | 📝 Documented |
+| **FEAT-AGENT-001** | Need agent assistance features | 🟡 MEDIUM | 📝 Documented |
+
+**Agent Assistance Ideas:**
+- Session management (reset, compact, new)
+- Model selection (switch on fly)
+- Token usage display (real-time)
+- Context window display
+- Agent status (thinking/idle/working)
+- Tool call visualization
+- Conversation history management
+- Export/import conversations
+- Voice input/output
+- File attachments
+- Code syntax highlighting
+- Markdown rendering
+
+**Fix Priority:** Week 3-4 (Medium)
+
+---
+
+### P3 - LOW (Future Enhancements)
+
+| Bug/Feature | Description | Impact | Status |
+|-------------|-------------|--------|--------|
+| **FEAT-TEST-001** | Multi-agent deep bug hunt | 🟢 LOW | 📝 Documented |
+| **FEAT-TEST-002** | Heavy testing across all features | 🟢 LOW | 📝 Documented |
+| **FEAT-USEFUL-001** | Add features useful to everyone | 🟢 LOW | 📝 Documented |
+
+**Useful Features Ideas:**
+- Quick Actions that actually work
+- Real gateway controls (restart, status, logs)
+- Working chat (with history)
+- Working discovery (reliable)
+- Simple setup (one-tap connect)
+- Offline mode (cache recent data)
+- Notifications (gateway status, messages)
+- Home screen widgets
+- Dark/Light theme (proper)
+- Settings that work (all functional)
+- Backup/Restore (conversations)
+- Export (conversations, logs, data)
+- Import (from other devices)
+- Sync (across devices)
+- Voice (input/output that works)
+- Attachments (files, images, code)
+- Search (conversations, logs, actions)
+- Favorites (actions, conversations)
+- History (full, searchable)
+- Analytics (usage stats, tokens)
+
+**Fix Priority:** Week 4+ (Low, as time permits)
+
+---
+
+## 🗓️ **IMPLEMENTATION TIMELINE:**
+
+### **Week 1 (Current): IDEA MODE**
+- ✅ Document all bugs
+- ✅ Document all feature requests
+- ✅ Root cause analysis
+- ✅ Research solutions
+- ✅ Plan implementation
+- ❌ NO implementation (low usage)
+
+### **Week 2: CRITICAL FIXES**
+- [ ] Fix chat send button
+- [ ] Fix WebSocket connection
+- [ ] Fix agent responses
+- [ ] Basic chat functionality working
+
+### **Week 3: HIGH PRIORITY**
+- [ ] Modern chat UI/UX
+- [ ] Message history
+- [ ] Typing indicators
+- [ ] Error handling
+- [ ] Agent assistance features (basic)
+
+### **Week 4: MEDIUM PRIORITY**
+- [ ] Regular OpenClaw agent (unmodified)
+- [ ] Agent assistance features (advanced)
+- [ ] Session management
+- [ ] Model selection
+- [ ] Token usage display
+
+### **Week 5+: LOW PRIORITY**
+- [ ] Multi-agent bug hunt
+- [ ] Heavy testing
+- [ ] Useful features (as prioritized)
+- [ ] User feedback implementation
+
+---
+
+## 📊 **BUG STATISTICS:**
+
+| Priority | Count | Status |
+|----------|-------|--------|
+| 🔴 P0 - Critical | 3 | 📝 Documented |
+| 🟠 P1 - High | 4 | 📝 Documented |
+| 🟡 P2 - Medium | 2 | 📝 Documented |
+| 🟢 P3 - Low | 3+ | 📝 Documented |
+| **TOTAL** | **12+** | **All Documented** |
+
+---
+
+## 📝 **DETAILED DOCUMENTATION:**
+
+**Full bug reports in:**
+- `/Users/duckets/.openclaw/workspace/memory/mobile-app-critical-bugs-2026-03-10.md`
+
+**Includes:**
+- Detailed bug descriptions
+- Root cause analysis
+- Hypotheses for each bug
+- Files to investigate
+- Fix recommendations
+- Testing checklists
+- Implementation timeline
+
+---
+
+**STATUS:** ✅ All bugs documented, KANBAN updated, ready for implementation when usage increases!
+
