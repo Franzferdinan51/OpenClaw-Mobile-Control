@@ -213,6 +213,12 @@ class _ControlScreenState extends State<ControlScreen> {
   }
 
   @override
+  void dispose() {
+    _holdTimer?.cancel(); // Prevent memory leak - cancel timer on dispose
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(

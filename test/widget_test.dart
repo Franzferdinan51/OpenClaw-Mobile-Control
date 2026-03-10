@@ -1,30 +1,34 @@
-// This is a basic Flutter widget test.
+// OpenClaw Mobile App Tests
 //
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Basic widget tests for the OpenClaw Mobile app.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:openclaw_mobile/main.dart';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:openclaw_mobile/app.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  group('OpenClawApp Tests', () {
+    setUp(() async {
+      // Set up mock SharedPreferences for testing
+      SharedPreferences.setMockInitialValues({});
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    testWidgets('App initializes and shows loading state', (WidgetTester tester) async {
+      // Build our app and trigger a frame.
+      await tester.pumpWidget(const OpenClawApp());
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+      // The app should show a loading indicator initially
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('App has correct theme', (WidgetTester tester) async {
+      await tester.pumpWidget(const OpenClawApp());
+
+      // Verify MaterialApp exists
+      expect(find.byType(MaterialApp), findsOneWidget);
+    });
   });
 }

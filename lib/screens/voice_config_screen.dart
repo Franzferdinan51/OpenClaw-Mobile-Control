@@ -121,7 +121,6 @@ class _VoiceConfigScreenState extends State<VoiceConfigScreen> {
                       subtitle: const Text('Listen without tapping'),
                       value: _continuousListening,
                       onChanged: _talkModeEnabled ? (value) => setState(() => _continuousListening = value) : null,
-                      enabled: _talkModeEnabled,
                     ),
                     ListTile(
                       title: const Text('Silence Threshold'),

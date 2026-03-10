@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'app.dart';
 import 'services/app_settings_service.dart';
+import 'services/theme_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -8,5 +9,8 @@ void main() async {
   // Initialize app settings before app starts
   await AppSettingsService.initialize();
   
-  runApp(const OpenClawApp());
+  // Initialize theme service
+  await ThemeService.initialize();
+  
+  runApp(const DuckBotGoApp());
 }

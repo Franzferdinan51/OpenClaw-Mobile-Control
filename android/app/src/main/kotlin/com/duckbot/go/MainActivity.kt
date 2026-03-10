@@ -1,4 +1,4 @@
-package com.example.openclaw_mobile
+package com.duckbot.go
 
 import io.flutter.embedding.android.FlutterActivity
 

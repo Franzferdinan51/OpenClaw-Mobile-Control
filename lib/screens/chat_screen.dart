@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import '../models/agent_personality.dart';
 import '../data/agency_agents.dart';
+import '../services/chat_export_service.dart';
+import '../services/prompt_templates_service.dart';
+import '../widgets/export_dialog.dart';
 import 'agent_library_screen.dart';
 import 'agent_selector_screen.dart';
 import 'agent_detail_screen.dart';
 import 'multi_agent_screen.dart';
+import 'prompt_templates_screen.dart';
 
 /// Simple Message model for chat
 class Message {
@@ -128,6 +132,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _generateResponse(String userInput) {
     Future.delayed(const Duration(milliseconds: 800), () {
+      // Prevent setState after widget disposed (memory leak fix)
+      if (!mounted) return;
+      
       String response;
       
       if (_isMultiAgentMode && _multiAgentTeam.isNotEmpty) {
@@ -303,6 +310,75 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
       ),
     );
   }
+  
+  void _showTemplates() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PromptTemplatesScreen(
+          selectionMode: true,
+          onTemplateSelected: (template, filledPrompt) async {
+            // Insert the filled prompt into the text field
+            _messageController.text = filledPrompt;
+            
+            // Increment usage count
+            final service = await PromptTemplatesService.getInstance();
+            await service.incrementUsage(template.id);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Convert internal messages to export format
+  List<ExportMessage> _getExportMessages() {
+    return _messages.map((m) => ExportMessage(
+      id: m.id,
+      content: m.content,
+      isUser: m.isUser,
+      timestamp: m.timestamp,
+      agentName: m.agent?.name,
+      agentEmoji: m.agent?.emoji,
+    )).toList();
+  }
+
+  /// Show export dialog
+  void _showExportDialog() {
+    if (_messages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No messages to export'),
+        ),
+      );
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => ExportDialog(
+        messages: _getExportMessages(),
+        title: 'DuckBot Chat',
+      ),
+    );
+  }
+
+  /// Show quick export bottom sheet
+  void _showExportSheet() {
+    if (_messages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No messages to export'),
+        ),
+      );
+      return;
+    }
+    
+    ExportBottomSheet.show(
+      context,
+      messages: _getExportMessages(),
+      title: 'DuckBot Chat',
+    );
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -405,6 +481,12 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
           ],
         ),
         actions: [
+          // Export button
+          IconButton(
+            icon: const Icon(Icons.download),
+            onPressed: _showExportSheet,
+            tooltip: 'Export chat',
+          ),
           // Agent mode indicator + buttons
           if (_activeAgent != null)
             IconButton(
@@ -542,6 +624,13 @@ Try: "show agents", "activate AI Engineer", or "multi-agent"''';
                     onPressed: _showAgentSelector,
                     tooltip: 'Select Agent',
                     color: _activeAgent != null ? _activeAgent!.division.color : null,
+                  ),
+                  
+                  // Prompt templates button
+                  IconButton(
+                    icon: const Icon(Icons.description_outlined),
+                    onPressed: _showTemplates,
+                    tooltip: 'Prompt Templates',
                   ),
                   
                   // Attachment button (placeholder)

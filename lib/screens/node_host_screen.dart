@@ -939,6 +939,9 @@ class NodeHostProvider extends ChangeNotifier {
   Duration? get uptime => _startTime != null ? DateTime.now().difference(_startTime!) : null;
   List<NodeConnection> get connections => List.unmodifiable(_connections);
   List<ConnectionLogEntry> get logs => List.unmodifiable(_logs);
+  
+  /// Get the underlying NodeHostService
+  NodeHostService? get service => _service;
 
   /// Start the host server
   Future<void> start() async {

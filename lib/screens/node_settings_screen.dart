@@ -6,10 +6,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/node_connection.dart';
-import '../services/node_host_service.dart';
+import '../services/node_approval_service.dart';
 import 'node_host_screen.dart';
 import 'qr_pairing_screen.dart';
 import 'connected_devices_screen.dart';
+import 'node_approval_screen.dart';
 
 class NodeSettingsScreen extends StatelessWidget {
   const NodeSettingsScreen({super.key});
@@ -28,45 +29,135 @@ class _NodeSettingsContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Node Settings'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.help_outline),
-            onPressed: () => _showHelpDialog(context),
-            tooltip: 'Help',
-          ),
-        ],
-      ),
-      body: Consumer<NodeHostProvider>(
-        builder: (context, provider, child) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => NodeHostProvider()),
+        ChangeNotifierProvider(create: (_) => NodeApprovalProvider()),
+      ],
+      child: Consumer2<NodeHostProvider, NodeApprovalProvider>(
+        builder: (context, hostProvider, approvalProvider, child) {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
               // Node Mode Selection
-              _buildNodeModeSection(context, provider),
+              _buildNodeModeSection(context, hostProvider),
               const SizedBox(height: 16),
 
               // Quick Status
-              _buildQuickStatusSection(context, provider),
+              _buildQuickStatusSection(context, hostProvider),
               const SizedBox(height: 16),
 
+              // Pending Requests Section (only if host/bridge mode and has pending)
+              if (hostProvider.mode == NodeMode.host || hostProvider.mode == NodeMode.bridge)
+                _buildPendingRequestsSection(context, hostProvider, approvalProvider),
+
               // Host Node Controls
-              if (provider.mode == NodeMode.host || provider.mode == NodeMode.bridge)
-                _buildHostControlsSection(context, provider),
+              if (hostProvider.mode == NodeMode.host || hostProvider.mode == NodeMode.bridge)
+                _buildHostControlsSection(context, hostProvider),
 
               // Client Node Controls
-              if (provider.mode == NodeMode.client || provider.mode == NodeMode.bridge)
-                _buildClientControlsSection(context, provider),
+              if (hostProvider.mode == NodeMode.client || hostProvider.mode == NodeMode.bridge)
+                _buildClientControlsSection(context, hostProvider),
 
               const SizedBox(height: 24),
 
               // Navigation Buttons
-              _buildNavigationButtons(context, provider),
+              _buildNavigationButtons(context, hostProvider, approvalProvider),
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Pending requests section with badge
+  Widget _buildPendingRequestsSection(
+    BuildContext context,
+    NodeHostProvider hostProvider,
+    NodeApprovalProvider approvalProvider,
+  ) {
+    final pendingCount = approvalProvider.pendingCount;
+    
+    // Only show if there are pending requests
+    if (pendingCount == 0) return const SizedBox.shrink();
+
+    return Card(
+      color: Colors.orange.withOpacity(0.1),
+      child: InkWell(
+        onTap: () => _openApprovalScreen(context, hostProvider),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              // Icon with badge
+              Stack(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.pending_actions,
+                      color: Colors.orange,
+                    ),
+                  ),
+                  // Badge
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.orange,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                      child: Text(
+                        pendingCount.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 16),
+              
+              // Text
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pending Approval Requests',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$pendingCount device(s) waiting for approval',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Arrow
+              const Icon(Icons.chevron_right, color: Colors.orange),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -379,9 +470,62 @@ class _NodeSettingsContent extends StatelessWidget {
     );
   }
 
-  Widget _buildNavigationButtons(BuildContext context, NodeHostProvider provider) {
+  Widget _buildNavigationButtons(
+    BuildContext context,
+    NodeHostProvider provider,
+    NodeApprovalProvider approvalProvider,
+  ) {
     return Column(
       children: [
+        // Approval requests button (only for host/bridge mode)
+        if (provider.mode == NodeMode.host || provider.mode == NodeMode.bridge) ...[
+          ElevatedButton.icon(
+            onPressed: () => _openApprovalScreen(context, provider),
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.approval),
+                if (approvalProvider.pendingCount > 0)
+                  Positioned(
+                    right: -8,
+                    top: -8,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.orange,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                      child: Text(
+                        approvalProvider.pendingCount > 99 
+                            ? '99+' 
+                            : approvalProvider.pendingCount.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            label: Text(
+              approvalProvider.pendingCount > 0
+                  ? 'Approval Requests (${approvalProvider.pendingCount})'
+                  : 'Node Approval',
+            ),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              backgroundColor: approvalProvider.pendingCount > 0 
+                  ? Colors.orange 
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
         if (provider.mode == NodeMode.host || provider.mode == NodeMode.bridge) ...[
           ElevatedButton.icon(
             onPressed: () => _openHostScreen(context, provider),
@@ -569,6 +713,17 @@ class _NodeSettingsContent extends StatelessWidget {
             child: const Text('Connect'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _openApprovalScreen(BuildContext context, NodeHostProvider provider) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => NodeApprovalScreen(
+          hostService: provider.service,
+        ),
       ),
     );
   }

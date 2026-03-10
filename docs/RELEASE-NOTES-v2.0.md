@@ -2,7 +2,8 @@
 
 **Version:** 2.0.0  
 **Release Date:** March 9, 2026  
-**Build:** OpenClaw-Mobile-v2.0.apk (53.7MB)
+**Build:** OpenClaw-Mobile-v2.0.apk (69.7MB)  
+**Tested Devices:** Pixel 10 Pro XL, Moto G Play 2026
 
 ---
 

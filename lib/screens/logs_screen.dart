@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/gateway_service.dart';
 
 class LogEntry {
   final String level;
@@ -10,6 +12,18 @@ class LogEntry {
     required this.message,
     required this.timestamp,
   });
+
+  factory LogEntry.fromJson(Map<String, dynamic> json) {
+    return LogEntry(
+      level: (json['level'] ?? 'INFO').toString().toUpperCase(),
+      message: json['message'] ?? json['msg'] ?? json['text'] ?? 'Unknown log',
+      timestamp: json['timestamp'] != null
+          ? DateTime.tryParse(json['timestamp'].toString()) ?? DateTime.now()
+          : json['time'] != null
+              ? DateTime.tryParse(json['time'].toString()) ?? DateTime.now()
+              : DateTime.now(),
+    );
+  }
 }
 
 class LogsScreen extends StatefulWidget {
@@ -22,38 +36,68 @@ class LogsScreen extends StatefulWidget {
 class _LogsScreenState extends State<LogsScreen> {
   String _selectedLevel = 'All';
   final List<LogEntry> _logs = [];
+  GatewayService? _service;
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    // Add sample log entries
-    _logs.addAll([
-      LogEntry(
-        level: 'INFO',
-        message: 'Gateway connected successfully',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 1)),
-      ),
-      LogEntry(
-        level: 'INFO',
-        message: 'Agent status refreshed',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 2)),
-      ),
-      LogEntry(
-        level: 'WARN',
-        message: 'Node connection slow',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
-      ),
-      LogEntry(
-        level: 'ERROR',
-        message: 'Failed to fetch status',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 10)),
-      ),
-      LogEntry(
-        level: 'DEBUG',
-        message: 'Processing request...',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 15)),
-      ),
-    ]);
+    _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
+    final token = prefs.getString('gateway_token');
+
+    setState(() {
+      _service = GatewayService(baseUrl: gatewayUrl, token: token);
+    });
+
+    await _fetchLogs();
+  }
+
+  Future<void> _fetchLogs() async {
+    if (_service == null) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final result = await _service!.getLogs(limit: 100);
+      
+      if (result is List) {
+        // Direct list of logs
+        setState(() {
+          _logs.clear();
+          _logs.addAll(result.map((log) => LogEntry.fromJson(log as Map<String, dynamic>)).toList());
+          _loading = false;
+        });
+      } else if (result is Map && result['logs'] != null) {
+        // Map with 'logs' key
+        final logsList = result['logs'] as List;
+        setState(() {
+          _logs.clear();
+          _logs.addAll(logsList.map((log) => LogEntry.fromJson(log as Map<String, dynamic>)).toList());
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _loading = false;
+          if (_logs.isEmpty) {
+            _error = 'No logs available from gateway';
+          }
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = 'Failed to fetch logs: $e';
+      });
+    }
   }
 
   @override
@@ -66,6 +110,11 @@ class _LogsScreenState extends State<LogsScreen> {
       appBar: AppBar(
         title: const Text('Logs'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _fetchLogs,
+            tooltip: 'Refresh logs',
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.filter_list),
             onSelected: (value) {
@@ -88,52 +137,59 @@ class _LogsScreenState extends State<LogsScreen> {
                 _logs.clear();
               });
             },
+            tooltip: 'Clear logs',
           ),
         ],
       ),
-      body: filteredLogs.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.article_outlined, size: 64, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('No logs to display'),
-                ],
-              ),
-            )
-          : ListView.builder(
-              itemCount: filteredLogs.length,
-              itemBuilder: (context, index) {
-                final log = filteredLogs[index];
-                return ListTile(
-                  leading: Icon(
-                    _getLogIcon(log.level),
-                    color: _getLogColor(log.level),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null && _logs.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.error_outline, size: 64, color: Colors.grey),
+                      const SizedBox(height: 16),
+                      Text(_error!, style: Theme.of(context).textTheme.bodyMedium),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: _fetchLogs,
+                        child: const Text('Retry'),
+                      ),
+                    ],
                   ),
-                  title: Text(log.message),
-                  subtitle: Text(
-                    '${log.level} • ${_formatTime(log.timestamp)}',
-                    style: TextStyle(
-                      color: _getLogColor(log.level),
-                      fontSize: 12,
+                )
+              : filteredLogs.isEmpty
+                  ? const Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.article_outlined, size: 64, color: Colors.grey),
+                          SizedBox(height: 16),
+                          Text('No logs to display'),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: filteredLogs.length,
+                      itemBuilder: (context, index) {
+                        final log = filteredLogs[index];
+                        return ListTile(
+                          leading: Icon(
+                            _getLogIcon(log.level),
+                            color: _getLogColor(log.level),
+                          ),
+                          title: Text(log.message),
+                          subtitle: Text(
+                            '${log.level} • ${_formatTime(log.timestamp)}',
+                            style: TextStyle(
+                              color: _getLogColor(log.level),
+                              fontSize: 12,
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                  ),
-                );
-              },
-            ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          setState(() {
-            _logs.insert(0, LogEntry(
-              level: 'INFO',
-              message: 'Manual log entry',
-              timestamp: DateTime.now(),
-            ));
-          });
-        },
-        child: const Icon(Icons.add),
-      ),
     );
   }
 

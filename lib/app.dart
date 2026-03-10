@@ -4,6 +4,7 @@ import '../services/gateway_service.dart';
 import '../services/discovery_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/connection_monitor_service.dart';
+import '../services/theme_service.dart';
 import '../models/gateway_status.dart';
 import '../dialogs/connection_success_dialog.dart';
 import 'screens/dashboard_screen.dart';
@@ -16,15 +17,16 @@ import 'screens/browser_control_screen.dart';
 import 'screens/workflows_screen.dart';
 import 'screens/scheduled_tasks_screen.dart';
 import 'screens/model_hub_screen.dart';
+import 'screens/global_search_screen.dart';
 
-class OpenClawApp extends StatefulWidget {
-  const OpenClawApp({super.key});
+class DuckBotGoApp extends StatefulWidget {
+  const DuckBotGoApp({super.key});
 
   @override
-  State<OpenClawApp> createState() => _OpenClawAppState();
+  State<DuckBotGoApp> createState() => _DuckBotGoAppState();
 }
 
-class _OpenClawAppState extends State<OpenClawApp> {
+class _DuckBotGoAppState extends State<DuckBotGoApp> {
   final DiscoveryService _discoveryService = DiscoveryService();
   GatewayService? _gatewayService;
   bool _isLoading = true;
@@ -169,33 +171,34 @@ class _OpenClawAppState extends State<OpenClawApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'OpenClaw Mobile',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00D4AA),
-          brightness: Brightness.dark,
-        ),
-      ),
-      home: _isLoading
-          ? const _LoadingScreen()
-          : _isFirstLaunch || _autoConnectFailed
-              ? _GuidedSetupScreen(
-                  error: _initialError,
-                  onComplete: () {
-                    setState(() {
-                      _isFirstLaunch = false;
-                      _autoConnectFailed = false;
-                      _loadGatewayService();
-                    });
-                  },
-                )
-              : MainNavigationScreen(
-                  gatewayService: _gatewayService,
-                  onGatewayChanged: _onGatewayChanged,
-                ),
+    return AnimatedBuilder(
+      animation: themeService,
+      builder: (context, child) {
+        return MaterialApp(
+          title: 'DuckBot Go',
+          debugShowCheckedModeBanner: false,
+          theme: themeService.getLightTheme(),
+          darkTheme: themeService.getDarkTheme(),
+          themeMode: themeService.themeMode,
+          home: _isLoading
+              ? const _LoadingScreen()
+              : _isFirstLaunch || _autoConnectFailed
+                  ? _GuidedSetupScreen(
+                      error: _initialError,
+                      onComplete: () {
+                        setState(() {
+                          _isFirstLaunch = false;
+                          _autoConnectFailed = false;
+                          _loadGatewayService();
+                        });
+                      },
+                    )
+                  : MainNavigationScreen(
+                      gatewayService: _gatewayService,
+                      onGatewayChanged: _onGatewayChanged,
+                    ),
+        );
+      },
     );
   }
 }
@@ -795,6 +798,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       body: IndexedStack(
         index: _currentIndex,
         children: _buildScreens(),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => GlobalSearchScreen(gatewayService: _gatewayService),
+            ),
+          );
+        },
+        child: const Icon(Icons.search),
+        tooltip: 'Search',
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,

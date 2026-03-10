@@ -1,5 +1,5 @@
-name: openclaw_mobile
-description: OpenClaw Mobile with BrowserOS MCP Integration
+name: duckbot_go
+description: DuckBot Go - Mobile companion for DuckBot
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -29,11 +29,22 @@ dependencies:
   # QR Code
   qr_flutter: ^4.1.0  # QR code generation
   mobile_scanner: ^4.0.1  # QR code scanning
+  # Export & Sharing
+  pdf: ^3.10.8  # PDF generation
+  share_plus: ^7.2.2  # System share sheet
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.1
+  flutter_launcher_icons: ^0.14.3
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icons/app_icon.png
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path: "assets/icons/app_icon.png"
+  min_sdk_android: 21

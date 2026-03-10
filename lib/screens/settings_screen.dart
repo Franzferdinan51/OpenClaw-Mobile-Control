@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_status.dart';
+import '../models/app_theme.dart';
 import '../services/discovery_service.dart';
 import '../services/tailscale_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/connection_monitor_service.dart';
 import '../services/gateway_service.dart';
+import '../services/theme_service.dart';
 import '../widgets/connection_status_icon.dart';
 import 'node_settings_screen.dart';
+import 'theme_selector_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Function()? onGatewayChanged;
@@ -1070,41 +1073,19 @@ class _SettingsScreenState extends State<SettingsScreen>
 
               // Theme
               Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.palette),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Theme',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ],
+                child: ListTile(
+                  leading: const Icon(Icons.palette),
+                  title: const Text('Theme'),
+                  subtitle: Text(_getThemeDisplayName()),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const ThemeSelectorScreen(),
                       ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _appSettings.theme,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        items: const [
-                          DropdownMenuItem(value: 'system', child: Text('System Default')),
-                          DropdownMenuItem(value: 'light', child: Text('Light')),
-                          DropdownMenuItem(value: 'dark', child: Text('Dark')),
-                        ],
-                        onChanged: (value) async {
-                          if (value != null) {
-                            await _appSettings.setTheme(value);
-                          }
-                        },
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 12),
@@ -1429,6 +1410,24 @@ class _SettingsScreenState extends State<SettingsScreen>
       case ConnectionStatus.error:
         return Colors.red.shade800;
     }
+  }
+
+  String _getThemeDisplayName() {
+    final theme = themeService.currentTheme;
+    final mode = themeService.themeMode;
+    String modeStr;
+    switch (mode) {
+      case ThemeMode.system:
+        modeStr = 'System';
+        break;
+      case ThemeMode.light:
+        modeStr = 'Light';
+        break;
+      case ThemeMode.dark:
+        modeStr = 'Dark';
+        break;
+    }
+    return '${theme.displayName} • $modeStr';
   }
 
   String _formatDate(DateTime date) {
