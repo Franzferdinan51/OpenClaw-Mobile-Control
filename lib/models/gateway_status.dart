@@ -3,6 +3,26 @@
 /// Handles both:
 /// - /health endpoint: {"ok":true,"status":"live"}
 /// - Full status from WebSocket RPC
+
+double? _asDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
+}
+
+int? _asInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value);
+  return null;
+}
+
+Map<String, dynamic>? _asMap(dynamic value) {
+  return value is Map<String, dynamic> ? value : null;
+}
+
 class GatewayStatus {
   final bool online;
   final String version;
@@ -34,13 +54,19 @@ class GatewayStatus {
   /// 
   /// /health returns: {"ok":true,"status":"live"}
   factory GatewayStatus.fromHealthJson(Map<String, dynamic> json) {
+    final system = _asMap(json['system']);
+    final memory = _asMap(system?['memory']) ?? _asMap(json['memory']);
+
     return GatewayStatus(
       online: json['ok'] == true || json['status'] == 'live',
-      version: json['version'] ?? 'unknown',
-      uptime: json['uptime'] ?? 0,
-      cpuPercent: json['cpu_percent']?.toDouble(),
-      memoryUsed: json['memory_used'],
-      memoryTotal: json['memory_total'],
+      version: json['version'] ?? system?['version'] ?? 'unknown',
+      uptime: _asInt(json['uptime']) ??
+          ((_asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs'])) != null
+              ? (((_asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs']))! ~/ 1000))
+              : 0),
+      cpuPercent: _asDouble(json['cpu_percent']) ?? _asDouble(system?['cpu_percent']) ?? _asDouble(system?['cpu']),
+      memoryUsed: _asInt(json['memory_used']) ?? _asInt(memory?['used']) ?? _asInt(system?['memory_used']) ?? _asInt(system?['rss']),
+      memoryTotal: _asInt(json['memory_total']) ?? _asInt(memory?['total']) ?? _asInt(system?['memory_total']),
       isPaused: json['paused'] == true,
       rawData: json,
     );
@@ -49,17 +75,38 @@ class GatewayStatus {
   /// Parse from full gateway status (WebSocket RPC or /api/gateway)
   factory GatewayStatus.fromJson(Map<String, dynamic> json) {
     // Handle different response formats
-    final gateway = json['gateway'] ?? json;
-    
+    final gateway = _asMap(json['gateway']) ?? json;
+    final system = _asMap(json['system']) ?? _asMap(gateway['system']);
+    final memory = _asMap(system?['memory']) ?? _asMap(gateway['memory']) ?? _asMap(json['memory']);
+
     return GatewayStatus(
       online: gateway['status'] == 'online' || 
               gateway['status'] == 'live' || 
               json['ok'] == true,
-      version: gateway['version'] ?? 'unknown',
-      uptime: gateway['uptime'] ?? 0,
-      cpuPercent: gateway['cpu_percent']?.toDouble(),
-      memoryUsed: gateway['memory_used'],
-      memoryTotal: gateway['memory_total'],
+      version: gateway['version'] ??
+          json['version'] ??
+          system?['version'] ??
+          _asMap(gateway['server'])?['version'] ??
+          _asMap(json['server'])?['version'] ??
+          'unknown',
+      uptime: _asInt(gateway['uptime']) ??
+          _asInt(json['uptime']) ??
+          ((_asInt(gateway['uptimeMs']) ?? _asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs'])) != null
+              ? (((_asInt(gateway['uptimeMs']) ?? _asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs']))! ~/ 1000))
+              : 0),
+      cpuPercent: _asDouble(gateway['cpu_percent']) ??
+          _asDouble(json['cpu_percent']) ??
+          _asDouble(system?['cpu_percent']) ??
+          _asDouble(system?['cpu']),
+      memoryUsed: _asInt(gateway['memory_used']) ??
+          _asInt(json['memory_used']) ??
+          _asInt(memory?['used']) ??
+          _asInt(system?['memory_used']) ??
+          _asInt(system?['rss']),
+      memoryTotal: _asInt(gateway['memory_total']) ??
+          _asInt(json['memory_total']) ??
+          _asInt(memory?['total']) ??
+          _asInt(system?['memory_total']),
       agents: (json['agents'] as List?)
           ?.map((a) => AgentInfo.fromJson(a))
           .toList(),

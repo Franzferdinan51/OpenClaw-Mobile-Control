@@ -5,6 +5,55 @@ All notable changes to DuckBot Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.3+303] - 2026-03-11
+
+### Added
+- **Enhanced Chat UX**: Modern message bubble design with improved visual hierarchy
+  - Larger, more readable message bubbles with better shadows
+  - Enhanced avatar sizes (18px) for better agent/user distinction
+  - Improved spacing and padding throughout chat interface
+  - Better inline widget integration with consistent spacing
+  - Enhanced typography (15px message text, 1.4 line height)
+- **Connection Status Indicators**: Real-time connection feedback in chat
+  - Detailed connection error display with retry button
+  - Connecting state with progress indicator
+  - Connected state with subtle success banner
+  - Input field border highlights when disconnected (orange)
+  - Send button state management (disabled when disconnected)
+  - Visual feedback with shadow effects on active send button
+- **System Health Verification**: Confirmed dashboard metrics working correctly
+  - CPU/memory metrics display with color-coded thresholds
+  - Clear "Unavailable" state when gateway doesn't expose metrics
+  - Progress bars with proper scaling (green < 70%, orange < 90%, red >= 90%)
+
+### Changed
+- **Chat Message Bubbles**: Enhanced visual design
+  - Increased border radius (16 → 18) for softer appearance
+  - Added subtle shadow effects for depth
+  - Improved padding (14/10 → 16/12) for better readability
+  - Enhanced timestamp styling (11px, lighter color)
+  - Better agent badge positioning and styling
+- **Compose Area**: Clearer send flow
+  - Send button with state-aware styling (primary color when connected, grey when not)
+  - Disabled send button when disconnected with cloud_off icon
+  - Input field disabled when disconnected
+  - Enhanced send button with shadow glow when active
+  - Better visual feedback for connection state
+- **Connection Status Bar**: More informative display
+  - Error state: Detailed error message with prominent retry button
+  - Connecting state: Progress indicator with explanatory text
+  - Connected state: Subtle green banner with checkmark
+
+### Fixed
+- Chat input now properly disabled when gateway disconnected
+- Send button visual state reflects actual connection status
+- Connection error messages more descriptive and actionable
+
+### Technical
+- Updated: `lib/screens/chat_screen.dart` (Enhanced chat UX, ~200 lines modified)
+- Verified: `lib/screens/dashboard_screen.dart` (System health metrics working)
+- Verified: `lib/services/connection_monitor_service.dart` (Connection monitoring active)
+
 ## [3.0.2+302] - 2026-03-11
 
 ### Added

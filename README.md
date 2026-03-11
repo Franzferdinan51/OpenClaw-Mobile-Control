@@ -1,13 +1,13 @@
 # DuckBot Go 🦆📱
 
-**Version:** 3.0.2  
+**Version:** 3.0.3  
 **Release Date:** March 11, 2026  
 **Status:** ✅ **PRODUCTION READY**  
 **Platform:** Android (Android 16+)  
-**APK Size:** 100.7MB (release)  
+**APK Size:** ~100MB (release)  
 **Validation:** `flutter test` ✅ · `flutter build apk --debug` ✅ · `flutter build apk --release` ✅  
 **GitHub:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control  
-**Release:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.2
+**Release:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.3
 
 ---
 

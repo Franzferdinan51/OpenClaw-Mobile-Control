@@ -448,20 +448,48 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_connectionError.isNotEmpty) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: Colors.red.shade100,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.red.shade50,
+          border: Border(
+            bottom: BorderSide(color: Colors.red.shade200, width: 1),
+          ),
+        ),
         child: Row(
           children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 16),
+            Icon(Icons.error_outline, color: Colors.red.shade700, size: 18),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                _connectionError,
-                style: const TextStyle(color: Colors.red, fontSize: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connection Error',
+                    style: TextStyle(
+                      color: Colors.red.shade700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    _connectionError,
+                    style: TextStyle(color: Colors.red.shade600, fontSize: 11),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
             ),
-            TextButton(
+            const SizedBox(width: 8),
+            ElevatedButton(
               onPressed: _connectToGateway,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade700,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
               child: const Text('Retry'),
             ),
           ],
@@ -472,19 +500,73 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_isConnected) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: Colors.orange.shade100,
-        child: const Row(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          border: Border(
+            bottom: BorderSide(color: Colors.orange.shade200, width: 1),
+          ),
+        ),
+        child: Row(
           children: [
-            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-            SizedBox(width: 8),
-            Text('Connecting to gateway...', style: TextStyle(color: Colors.orange, fontSize: 12)),
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: Colors.orange.shade700,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connecting to gateway...',
+                    style: TextStyle(
+                      color: Colors.orange.shade700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    'Establishing WebSocket connection',
+                    style: TextStyle(color: Colors.orange.shade600, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       );
     }
     
-    return const SizedBox.shrink();
+    // Connected - show subtle success indicator
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        border: Border(
+          bottom: BorderSide(color: Colors.green.shade200, width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle, color: Colors.green.shade700, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            'Connected to gateway',
+            style: TextStyle(
+              color: Colors.green.shade700,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildAgentIndicator() {
@@ -745,20 +827,47 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         filled: true,
                         fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide(
+                            color: _isConnected ? Colors.transparent : Colors.orange.shade300,
+                            width: _isConnected ? 0 : 2,
+                          ),
+                        ),
                       ),
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => _sendMessage(),
                       maxLines: null,
+                      enabled: _isConnected,
                     ),
                   ),
                   
-                  // Send button - FIXED: calls _sendMessage() not searchAgents()
-                  IconButton(
-                    icon: const Icon(Icons.send),
-                    onPressed: _sendMessage,
-                    tooltip: 'Send',
-                    color: Theme.of(context).colorScheme.primary,
+                  // Send button with state management
+                  Container(
+                    margin: const EdgeInsets.only(left: 4),
+                    decoration: BoxDecoration(
+                      color: _isConnected 
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey.shade400,
+                      shape: BoxShape.circle,
+                      boxShadow: _isConnected ? [
+                        BoxShadow(
+                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ] : null,
+                    ),
+                    child: IconButton(
+                      icon: Icon(
+                        _isConnected ? Icons.send : Icons.cloud_off,
+                        color: Colors.white,
+                      ),
+                      onPressed: _isConnected ? _sendMessage : null,
+                      tooltip: _isConnected ? 'Send' : 'Not connected',
+                      iconSize: 24,
+                    ),
                   ),
                 ],
               ),
@@ -784,11 +893,11 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           if (!isUser) ...[
             CircleAvatar(
-              radius: 16,
+              radius: 18,
               backgroundColor: message.agent?.division.color ?? const Color(0xFF00D4AA),
               child: Text(
                 message.agent?.emoji ?? '🦆',
-                style: const TextStyle(fontSize: 16),
+                style: const TextStyle(fontSize: 18),
               ),
             ),
             const SizedBox(width: 8),
@@ -799,11 +908,11 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 if (showAgentBadge)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
+                    padding: const EdgeInsets.only(bottom: 4, left: 4),
                     child: Text(
                       message.agent!.name,
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 11,
                         color: message.agent!.division.color,
                         fontWeight: FontWeight.bold,
                       ),
@@ -821,9 +930,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         : isUser 
                             ? colorScheme.primary 
                             : colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -842,14 +958,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                       : isUser 
                                           ? colorScheme.onPrimary 
                                           : colorScheme.onSurface,
+                                  fontSize: 15,
+                                  height: 1.4,
                                 ),
                               ),
                             ),
                             if (message.isSending) ...[
                               const SizedBox(width: 8),
                               const SizedBox(
-                                width: 12,
-                                height: 12,
+                                width: 14,
+                                height: 14,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               ),
                             ],
@@ -858,7 +976,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       
                       // Inline weather widget
                       if (message.hasWeatherWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        if (message.content.isNotEmpty) const SizedBox(height: 10),
                         InlineWeatherWidget(
                           data: message.weatherWidget!,
                           showForecast: message.showWeatherForecast,
@@ -868,7 +986,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       
                       // Inline chart widget
                       if (message.hasChartWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        if (message.content.isNotEmpty) const SizedBox(height: 10),
                         InlineChartWidget(
                           chartData: message.chartWidget!,
                         ),
@@ -876,7 +994,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       
                       // Inline info card widget
                       if (message.hasInfoCardWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        if (message.content.isNotEmpty) const SizedBox(height: 10),
                         InlineCardWidget(
                           data: message.infoCardWidget!,
                         ),
@@ -884,7 +1002,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       
                       // Inline status widget
                       if (message.hasStatusWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        if (message.content.isNotEmpty) const SizedBox(height: 10),
                         InlineStatusWidget(
                           data: message.statusWidget!,
                         ),
@@ -896,7 +1014,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           !message.hasChartWidget &&
                           !message.hasInfoCardWidget &&
                           !message.hasStatusWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 8),
+                        if (message.content.isNotEmpty) const SizedBox(height: 10),
                         _buildGenericInlineWidget(message.inlineWidget!),
                       ],
                     ],
@@ -907,6 +1025,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _formatTime(message.timestamp),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colorScheme.onSurface.withValues(alpha: 0.5),
+                    fontSize: 11,
                   ),
                 ),
               ],
@@ -915,11 +1034,11 @@ class _ChatScreenState extends State<ChatScreen> {
           if (isUser) ...[
             const SizedBox(width: 8),
             CircleAvatar(
-              radius: 16,
+              radius: 18,
               backgroundColor: colorScheme.secondary,
               child: Icon(
                 Icons.person,
-                size: 18,
+                size: 20,
                 color: colorScheme.onSecondary,
               ),
             ),

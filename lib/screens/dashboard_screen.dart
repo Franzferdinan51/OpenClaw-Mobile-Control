@@ -257,7 +257,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 16),
             if (status != null) ...[
-              _buildInfoRow('Version', status.version),
+              _buildInfoRow('Version', status.version == 'unknown' ? 'Unavailable' : status.version),
               _buildInfoRow('Uptime', _formatUptime(status.uptime)),
               if (status.cpuPercent != null) _buildInfoRow('CPU', '${status.cpuPercent!.toStringAsFixed(1)}%'),
               if (status.memoryUsed != null && status.memoryTotal != null)
@@ -367,8 +367,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String _formatUptime(int seconds) {
-    final hours = seconds ~/ 3600;
+    if (seconds <= 0) return 'Unavailable';
+
+    final days = seconds ~/ 86400;
+    final hours = (seconds % 86400) ~/ 3600;
     final minutes = (seconds % 3600) ~/ 60;
+
+    if (days > 0) {
+      return '${days}d ${hours}h ${minutes}m';
+    }
     if (hours > 0) {
       return '${hours}h ${minutes}m';
     }
@@ -915,11 +922,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildSystemHealthCard() {
-    final cpuPercent = _status?.cpuPercent ?? 0.0;
-    final memoryPercent = (_status?.memoryTotal ?? 0) > 0 && _status?.memoryUsed != null
-        ? (_status!.memoryUsed!.toDouble() / _status!.memoryTotal!.toDouble() * 100.0)
-        : 0.0;
-    
+    final cpuPercent = _status?.cpuPercent;
+    final memoryPercent = _status?.memoryPercent;
+    final hasAnySystemMetrics = cpuPercent != null || memoryPercent != null;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -939,17 +945,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            _buildHealthIndicator('CPU Usage', cpuPercent, Colors.green, Colors.orange, Colors.red),
+            if (cpuPercent != null)
+              _buildHealthIndicator('CPU Usage', cpuPercent, Colors.green, Colors.orange, Colors.red)
+            else
+              _buildUnavailableHealthIndicator('CPU Usage'),
             const SizedBox(height: 12),
-            _buildHealthIndicator('Memory', memoryPercent, Colors.green, Colors.orange, Colors.red),
+            if (memoryPercent != null)
+              _buildHealthIndicator('Memory', memoryPercent, Colors.green, Colors.orange, Colors.red,
+                  detail: _status?.formattedMemory)
+            else
+              _buildUnavailableHealthIndicator('Memory', detail: _status?.formattedMemory),
+            if (!hasAnySystemMetrics) ...[
+              const SizedBox(height: 12),
+              Text(
+                'This gateway is not currently exposing live CPU/memory stats, so the dashboard will show them as unavailable instead of fake 0% values.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildHealthIndicator(String label, double percent, Color good, Color warn, Color error) {
-    final color = percent < 70 ? good : percent < 90 ? warn : error;
+  Widget _buildHealthIndicator(String label, double percent, Color good, Color warn, Color error, {String? detail}) {
+    final clampedPercent = percent.clamp(0.0, 100.0);
+    final color = clampedPercent < 70 ? good : clampedPercent < 90 ? warn : error;
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -959,18 +980,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Text(label, style: Theme.of(context).textTheme.labelMedium),
             Text(
-              '${percent.toStringAsFixed(1)}%',
+              '${clampedPercent.toStringAsFixed(1)}%',
               style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color, fontWeight: FontWeight.bold),
             ),
           ],
         ),
+        if (detail != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            detail,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+          ),
+        ],
         const SizedBox(height: 4),
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
-            value: percent / 100,
+            value: clampedPercent / 100,
             backgroundColor: Colors.grey[300],
             valueColor: AlwaysStoppedAnimation<Color>(color),
+            minHeight: 6,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUnavailableHealthIndicator(String label, {String? detail}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: Theme.of(context).textTheme.labelMedium),
+            Text(
+              'Unavailable',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: Colors.grey[700],
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        if (detail != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            detail,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+          ),
+        ],
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: 0,
+            backgroundColor: Colors.grey[300],
+            valueColor: AlwaysStoppedAnimation<Color>(Colors.grey[400]!),
             minHeight: 6,
           ),
         ),
