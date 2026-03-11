@@ -5,13 +5,14 @@
 ///
 /// Uses proot-distro to run Ubuntu inside Termux for full Linux compatibility.
 /// Handles Bionic libc bypass for Node.js compatibility on Android.
+/// 
+/// Detection: Uses Android package manager (pm) for reliable Termux detection.
 library;
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
+import '../utils/android_package_detector.dart';
 
 /// Command execution result
 class CommandResult {
@@ -58,16 +59,21 @@ class TermuxService {
 
   bool _isInitialized = false;
   bool _isTermuxAvailable = false;
+  bool _isTermuxApiAvailable = false;
   bool _isProotAvailable = false;
   bool _isUbuntuInstalled = false;
-  bool _isOpenClawInstalled = false;
   String? _openClawVersion;
   String? _nodeVersion;
   String? _gatewayStatus;
+  String? _termuxVersion;
 
   // Termux paths
   String? _termuxHomePath;
   String? _termuxPrefixPath;
+
+  // Detection results
+  PackageDetectionResult? _termuxDetectionResult;
+  PackageDetectionResult? _termuxApiDetectionResult;
 
   // Progress callbacks
   void Function(SetupProgress progress)? onSetupProgress;
@@ -82,19 +88,23 @@ class TermuxService {
 
   // ==================== Initialization ====================
 
-  /// Initialize the Termux service
+  /// Initialize the Termux service with comprehensive detection
   Future<bool> initialize() async {
     if (_isInitialized) return true;
 
     try {
       _log('Initializing Termux service...');
 
-      // Check if running in Termux environment
+      // Check if running in Termux environment using Android package manager
       await _checkTermuxAvailability();
 
       if (_isTermuxAvailable) {
         _findTermuxPaths();
-        _log('Termux available at: $_termuxPrefixPath');
+        _log('Termux available at: $_termuxPrefixPath (version: $_termuxVersion)');
+
+        // Check Termux:API
+        await _checkTermuxApiAvailability();
+        _log('Termux:API available: $_isTermuxApiAvailable');
 
         // Check proot-distro
         _isProotAvailable = await _checkProotAvailable();
@@ -117,23 +127,67 @@ class TermuxService {
     }
   }
 
-  /// Check if running in Termux
+  /// Check if Termux is installed using Android package manager
   Future<void> _checkTermuxAvailability() async {
     if (!Platform.isAndroid) {
       _isTermuxAvailable = false;
       return;
     }
 
-    // Check for Termux directory
-    final termuxDir = Directory('/data/data/com.termux/files');
-    if (await termuxDir.exists()) {
-      _isTermuxAvailable = true;
+    try {
+      // Primary method: Use Android package manager
+      _termuxDetectionResult = await AndroidPackageDetector.checkTermux();
+      _isTermuxAvailable = _termuxDetectionResult!.isInstalled;
+      _termuxVersion = _termuxDetectionResult?.versionName;
+
+      if (_isTermuxAvailable) {
+        _log('✅ Termux detected via package manager: ${_termuxDetectionResult?.packageName}');
+        return;
+      }
+
+      // Fallback: Check for Termux directory
+      _log('⚠️ Package manager check failed, trying file system fallback...');
+      final termuxDir = Directory('/data/data/com.termux/files');
+      if (await termuxDir.exists()) {
+        _isTermuxAvailable = true;
+        _log('✅ Termux detected via file system');
+        return;
+      }
+
+      // Final fallback: Check alternative paths
+      final altDir = Directory('/data/data/com.termux');
+      _isTermuxAvailable = await altDir.exists();
+      if (_isTermuxAvailable) {
+        _log('✅ Termux detected via alternative path');
+      } else {
+        _log('❌ Termux not detected by any method');
+      }
+    } catch (e) {
+      _log('Termux detection error: $e');
+      _isTermuxAvailable = false;
+    }
+  }
+
+  /// Check if Termux:API is installed
+  Future<void> _checkTermuxApiAvailability() async {
+    if (!Platform.isAndroid) {
+      _isTermuxApiAvailable = false;
       return;
     }
 
-    // Also check alternative paths
-    final altDir = Directory('/data/data/com.termux');
-    _isTermuxAvailable = await altDir.exists();
+    try {
+      _termuxApiDetectionResult = await AndroidPackageDetector.checkTermuxApi();
+      _isTermuxApiAvailable = _termuxApiDetectionResult!.isInstalled;
+
+      if (_isTermuxApiAvailable) {
+        _log('✅ Termux:API detected: ${_termuxApiDetectionResult?.versionName}');
+      } else {
+        _log('ℹ️ Termux:API not installed (optional)');
+      }
+    } catch (e) {
+      _log('Termux:API detection error: $e');
+      _isTermuxApiAvailable = false;
+    }
   }
 
   /// Find Termux paths
@@ -158,12 +212,34 @@ class TermuxService {
 
   bool get isInitialized => _isInitialized;
   bool get isTermuxAvailable => _isTermuxAvailable;
+  bool get isTermuxApiAvailable => _isTermuxApiAvailable;
   bool get isProotAvailable => _isProotAvailable;
   bool get isUbuntuInstalled => _isUbuntuInstalled;
   bool get isSetupComplete => _isTermuxAvailable && _isProotAvailable && _isUbuntuInstalled;
   String? get openClawVersion => _openClawVersion;
   String? get nodeVersion => _nodeVersion;
   String? get gatewayStatus => _gatewayStatus;
+  String? get termuxVersion => _termuxVersion;
+  PackageDetectionResult? get termuxDetectionResult => _termuxDetectionResult;
+  PackageDetectionResult? get termuxApiDetectionResult => _termuxApiDetectionResult;
+
+  /// Get detailed Termux installation info
+  Map<String, dynamic> getTermuxInfo() {
+    return {
+      'isInstalled': _isTermuxAvailable,
+      'version': _termuxVersion,
+      'packageName': _termuxDetectionResult?.packageName,
+      'versionCode': _termuxDetectionResult?.versionCode,
+      'isEnabled': _termuxDetectionResult?.isEnabled,
+      'installSource': _termuxDetectionResult?.installSource,
+      'firstInstallTime': _termuxDetectionResult?.firstInstallTime?.toIso8601String(),
+      'lastUpdateTime': _termuxDetectionResult?.lastUpdateTime?.toIso8601String(),
+      'isApiInstalled': _isTermuxApiAvailable,
+      'apiVersion': _termuxApiDetectionResult?.versionName,
+      'isProotAvailable': _isProotAvailable,
+      'isUbuntuInstalled': _isUbuntuInstalled,
+    };
+  }
 
   // ==================== Command Execution ====================
 

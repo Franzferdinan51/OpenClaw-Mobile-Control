@@ -3,12 +3,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/nodejs_installer_service.dart';
 import '../services/gateway_service.dart';
+import '../services/termux_service.dart';
+import '../utils/android_package_detector.dart';
 import 'connect_gateway_screen.dart';
 
 /// Local OpenClaw Installer Screen
 /// 
 /// Guides users through installing OpenClaw locally on their Android device
 /// using Termux or a bundled Node.js runtime. No root required.
+/// 
+/// Features:
+/// - Comprehensive prerequisite checking
+/// - Clear status messages for what's installed/missing
+/// - Step-by-step installation with progress
+/// - Detailed logging for troubleshooting
 class LocalInstallerScreen extends StatefulWidget {
   final Function()? onInstallationComplete;
 
@@ -21,14 +29,20 @@ class LocalInstallerScreen extends StatefulWidget {
 class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     with TickerProviderStateMixin {
   final NodejsInstallerService _installerService = NodejsInstallerService();
+  final TermuxService _termuxService = TermuxService();
   
   // Installation state
   InstallationState _state = InstallationState.idle;
   InstallationStep _currentStep = InstallationStep.checkingPrerequisites;
   double _progress = 0.0;
-  String _statusMessage = 'Ready to install OpenClaw';
+  String _statusMessage = 'Checking prerequisites...';
   String? _errorMessage;
   List<InstallLogEntry> _logs = [];
+  
+  // Prerequisite check results
+  TermuxReadinessSummary? _readinessSummary;
+  bool _isCheckingReadiness = false;
+  bool _hasShownReadiness = false;
   
   // Controllers
   final ScrollController _logsScrollController = ScrollController();
@@ -47,6 +61,44 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     )..repeat(reverse: true);
     
     _setupListeners();
+    _checkReadiness();
+  }
+
+  Future<void> _checkReadiness() async {
+    setState(() {
+      _isCheckingReadiness = true;
+    });
+
+    try {
+      // Initialize Termux service for detection
+      await _termuxService.initialize();
+      
+      // Get readiness summary
+      _readinessSummary = await _installerService.getReadinessSummary();
+      
+      // Log results
+      _log('info', 'Readiness check complete: ${_readinessSummary!.readinessText}');
+      _log('info', 'Passed ${_readinessSummary!.passedChecks}/${_readinessSummary!.totalChecks} checks');
+      
+      if (_readinessSummary!.blockingIssues.isNotEmpty) {
+        for (final issue in _readinessSummary!.blockingIssues) {
+          _log('error', 'BLOCKING: ${issue.name} - ${issue.actionRequired}');
+        }
+      }
+      
+      if (_readinessSummary!.recommendations.isNotEmpty) {
+        for (final rec in _readinessSummary!.recommendations) {
+          _log('info', 'RECOMMENDED: ${rec.name} - ${rec.actionRequired}');
+        }
+      }
+    } catch (e) {
+      _log('error', 'Readiness check failed: $e');
+    }
+
+    setState(() {
+      _isCheckingReadiness = false;
+      _hasShownReadiness = true;
+    });
   }
 
   void _setupListeners() {
@@ -98,7 +150,33 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     });
   }
 
+  void _log(String level, String message, [String? details]) {
+    if (mounted) {
+      setState(() {
+        _logs.add(InstallLogEntry(
+          timestamp: DateTime.now(),
+          level: level,
+          message: message,
+          details: details,
+        ));
+      });
+      _scrollToBottom();
+    }
+  }
+
   Future<void> _startInstallation() async {
+    // Check if ready to install
+    if (_readinessSummary != null && !_readinessSummary!.isReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Please resolve blocking issues before installing'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 5),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _state = InstallationState.installingNodejs;
       _errorMessage = null;
@@ -306,6 +384,12 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       appBar: AppBar(
         title: const Text('Local OpenClaw Installer'),
         actions: [
+          if (!_isCheckingReadiness && _readinessSummary != null)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _checkReadiness,
+              tooltip: 'Re-check prerequisites',
+            ),
           IconButton(
             icon: const Icon(Icons.help_outline),
             onPressed: _showTroubleshooting,
@@ -331,6 +415,15 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   // Header card
                   _buildHeaderCard(colorScheme),
                   const SizedBox(height: 24),
+                  
+                  // Prerequisites check (shown before installation)
+                  if (_hasShownReadiness && _readinessSummary != null && 
+                      _state == InstallationState.idle)
+                    _buildReadinessCard(colorScheme),
+                  
+                  if (_hasShownReadiness && _readinessSummary != null && 
+                      _state == InstallationState.idle)
+                    const SizedBox(height: 24),
                   
                   // Progress indicator
                   if (_state != InstallationState.idle && 
@@ -423,6 +516,246 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildReadinessCard(ColorScheme colorScheme) {
+    if (_isCheckingReadiness) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Checking prerequisites...',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Verifying Termux, Node.js, and system requirements',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final summary = _readinessSummary!;
+    final isReady = summary.isReady;
+    final blockingCount = summary.blockingIssues.length;
+    final recommendedCount = summary.recommendations.length;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isReady ? Colors.green : Colors.red,
+          width: 2,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Icon(
+                  isReady ? Icons.check_circle : Icons.error,
+                  color: isReady ? Colors.green : Colors.red,
+                  size: 32,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Installation Readiness',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        summary.readinessText,
+                        style: TextStyle(
+                          color: isReady ? Colors.green : Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            
+            const Divider(height: 24),
+            
+            // Progress
+            LinearProgressIndicator(
+              value: summary.passedChecks / summary.totalChecks,
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                isReady ? Colors.green : Colors.orange,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${summary.passedChecks}/${summary.totalChecks} checks passed',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // Blocking issues
+            if (blockingCount > 0) ...[
+              Text(
+                '⚠️ Blocking Issues ($blockingCount)',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: Colors.red,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...summary.blockingIssues.map((issue) => _buildPrerequisiteItem(
+                issue.name,
+                issue.message ?? 'Not satisfied',
+                issue.actionRequired,
+                false,
+              )),
+              const SizedBox(height: 16),
+            ],
+            
+            // Recommendations
+            if (recommendedCount > 0) ...[
+              Text(
+                '💡 Recommendations ($recommendedCount)',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...summary.recommendations.map((issue) => _buildPrerequisiteItem(
+                issue.name,
+                issue.message ?? 'Not satisfied',
+                issue.actionRequired,
+                true,
+              )),
+              const SizedBox(height: 16),
+            ],
+            
+            // Termux info
+            if (_termuxService.isInitialized) ...[
+              const Divider(height: 24),
+              Text(
+                'Detected Environment',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _buildInfoRow('Termux', 
+                _termuxService.isTermuxAvailable 
+                  ? '✅ ${_termuxService.termuxVersion ?? "Installed"}'
+                  : '❌ Not installed'),
+              _buildInfoRow('Termux:API',
+                _termuxService.isTermuxApiAvailable
+                  ? '✅ ${_termuxService.termuxApiDetectionResult?.versionName ?? "Installed"}'
+                  : 'ℹ️ Not installed (optional)'),
+              _buildInfoRow('proot-distro',
+                _termuxService.isProotAvailable ? '✅ Available' : '❌ Not available'),
+              _buildInfoRow('Ubuntu',
+                _termuxService.isUbuntuInstalled ? '✅ Installed' : 'ℹ️ Not installed'),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPrerequisiteItem(String name, String status, String? action, bool isRecommended) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isRecommended 
+          ? Colors.orange.withOpacity(0.1)
+          : Colors.red.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isRecommended ? Colors.orange.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isRecommended ? Icons.info_outline : Icons.error_outline,
+                size: 16,
+                color: isRecommended ? Colors.orange : Colors.red,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                name,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            status,
+            style: TextStyle(
+              fontSize: 12,
+              color: isRecommended ? Colors.orange.shade700 : Colors.red.shade700,
+            ),
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              '→ $action',
+              style: TextStyle(
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+                color: isRecommended ? Colors.orange.shade600 : Colors.red.shade600,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -662,17 +995,35 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   Widget _buildActionButtons(ColorScheme colorScheme) {
     // Show different buttons based on state
     if (_state == InstallationState.idle) {
+      // Check readiness
+      if (_isCheckingReadiness) {
+        return OutlinedButton.icon(
+          onPressed: null,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 56),
+          ),
+          icon: const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          label: const Text('Checking prerequisites...'),
+        );
+      }
+
+      final canInstall = _readinessSummary?.isReady ?? false;
+      
       return FilledButton.icon(
-        onPressed: _startInstallation,
+        onPressed: canInstall ? _startInstallation : null,
         style: FilledButton.styleFrom(
           minimumSize: const Size(double.infinity, 56),
-          backgroundColor: colorScheme.primary,
-          foregroundColor: colorScheme.onPrimary,
+          backgroundColor: canInstall ? colorScheme.primary : colorScheme.surfaceContainerHighest,
+          foregroundColor: canInstall ? colorScheme.onPrimary : colorScheme.onSurfaceVariant,
         ),
-        icon: const Icon(Icons.download),
-        label: const Text(
-          'Start Installation',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        icon: Icon(canInstall ? Icons.download : Icons.block),
+        label: Text(
+          canInstall ? 'Start Installation' : 'Resolve Issues First',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
       );
     }

@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import '../utils/android_package_detector.dart';
+import 'termux_service.dart';
 
 /// Installation states
 enum InstallationState {
@@ -83,41 +85,59 @@ class NodejsInstallerService {
     _log('debug', 'Initialized directories', 'App: $_appDir, Node: $_nodeDir, OpenClaw: $_openclawDir');
   }
 
+  /// Get installation readiness summary
+  Future<TermuxReadinessSummary> getReadinessSummary() async {
+    return await TermuxPrerequisiteChecker.getReadinessSummary();
+  }
+
   /// Main installation entry point
   Future<bool> installOpenClaw() async {
     try {
       _setState(InstallationState.checkingPrerequisites);
-      _updateProgress(InstallationStep.checkingPrerequisites, 0.0, 'Initializing...');
+      _updateProgress(InstallationStep.checkingPrerequisites, 0.0, 'Running comprehensive prerequisite check...');
       
       await _initDirectories();
       
-      // Check prerequisites
-      _updateProgress(InstallationStep.checkingPrerequisites, 0.1, 'Checking storage space...');
-      if (!await _checkStorageSpace()) {
-        _setError('Insufficient storage space. Need ~500MB free.');
+      // Use comprehensive prerequisite checker
+      _updateProgress(InstallationStep.checkingPrerequisites, 0.1, 'Checking all prerequisites...');
+      final readiness = await TermuxPrerequisiteChecker.getReadinessSummary();
+      
+      // Log readiness status
+      _log('info', 'Installation readiness: ${readiness.readinessText}');
+      _log('info', 'Passed ${readiness.passedChecks}/${readiness.totalChecks} checks');
+      
+      // Check for blocking issues
+      if (readiness.blockingIssues.isNotEmpty) {
+        final issues = readiness.blockingIssues.map((i) => '${i.name}: ${i.actionRequired}').join('\n');
+        _setError('Installation blocked:\n$issues');
+        _updateProgress(InstallationStep.checkingPrerequisites, 1.0, 'Prerequisites not met');
         return false;
       }
       
-      _updateProgress(InstallationStep.checkingPrerequisites, 0.3, 'Checking network connectivity...');
-      if (!await _checkNetworkConnectivity()) {
-        _setError('No internet connection. Installation requires internet.');
-        return false;
+      // Log recommendations
+      if (readiness.recommendations.isNotEmpty) {
+        final recs = readiness.recommendations.map((r) => '• ${r.name}: ${r.actionRequired}').join('\n');
+        _log('info', 'Recommendations:\n$recs');
       }
       
-      _updateProgress(InstallationStep.checkingPrerequisites, 0.5, 'Checking Termux availability...');
-      final termuxAvailable = await _isTermuxAvailable();
-      
-      _updateProgress(InstallationStep.checkingPrerequisites, 0.8, 'Checking existing Node.js...');
+      _updateProgress(InstallationStep.checkingPrerequisites, 0.5, 'Checking existing Node.js...');
       final nodeInstalled = await _isNodeInstalled();
       
-      _updateProgress(InstallationStep.checkingPrerequisites, 1.0, 'Prerequisites check complete');
+      // Get Termux info
+      final termuxService = TermuxService();
+      await termuxService.initialize();
+      final termuxInfo = termuxService.getTermuxInfo();
+      _log('info', 'Termux: ${termuxInfo['isInstalled']} (version: ${termuxInfo['version']})');
+      _log('info', 'Termux:API: ${termuxInfo['isApiInstalled']}');
+      
+      _updateProgress(InstallationStep.checkingPrerequisites, 1.0, 'Prerequisites check complete ✅');
       
       // Install Node.js if needed
       if (!nodeInstalled) {
         _setState(InstallationState.installingNodejs);
         _updateProgress(InstallationStep.installingNodejs, 0.0, 'Starting Node.js installation...');
         
-        if (termuxAvailable) {
+        if (termuxService.isTermuxAvailable) {
           if (!await _installNodeViaTermux()) {
             _setError('Failed to install Node.js via Termux');
             return false;
@@ -131,7 +151,7 @@ class NodejsInstallerService {
         }
       } else {
         _log('info', 'Node.js already installed, skipping...');
-        _updateProgress(InstallationStep.installingNodejs, 1.0, 'Node.js already installed');
+        _updateProgress(InstallationStep.installingNodejs, 1.0, 'Node.js already installed ✅');
       }
       
       // Install OpenClaw
@@ -156,7 +176,7 @@ class NodejsInstallerService {
       await _saveInstallationState();
       
       _setState(InstallationState.completed);
-      _updateProgress(InstallationStep.completed, 1.0, 'Installation complete!');
+      _updateProgress(InstallationStep.completed, 1.0, 'Installation complete! 🎉');
       _log('success', 'OpenClaw installed successfully!');
       
       return true;
@@ -264,54 +284,6 @@ class NodejsInstallerService {
       return response.statusCode == 200;
     } catch (_) {
       return false;
-    }
-  }
-
-  /// Check storage space
-  Future<bool> _checkStorageSpace() async {
-    try {
-      final result = await Process.run('df', ['-k', _appDir ?? '/data']);
-      if (result.exitCode == 0) {
-        // Parse df output to get available space
-        final lines = result.stdout.toString().split('\n');
-        for (final line in lines) {
-          final parts = line.trim().split(RegExp(r'\s+'));
-          if (parts.length >= 4) {
-            final availableKb = int.tryParse(parts[3]);
-            if (availableKb != null) {
-              final availableMb = availableKb ~/ 1024;
-              _log('info', 'Available storage: ${availableMb}MB');
-              return availableMb >= 500;
-            }
-          }
-        }
-      }
-      return true; // Assume ok if we can't check
-    } catch (e) {
-      _log('warning', 'Could not check storage space', e.toString());
-      return true;
-    }
-  }
-
-  /// Check network connectivity
-  Future<bool> _checkNetworkConnectivity() async {
-    try {
-      final result = await InternetAddress.lookup('registry.npmjs.org')
-        .timeout(const Duration(seconds: 5));
-      return result.isNotEmpty;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /// Check if Termux is available
-  Future<bool> _isTermuxAvailable() async {
-    try {
-      final result = await Process.run('which', ['termux-setup-storage']);
-      return result.exitCode == 0;
-    } catch (_) {
-      // Check for Termux directory
-      return Directory('/data/data/com.termux').existsSync();
     }
   }
 
