@@ -22,22 +22,24 @@ class DiscoveryLogEntry {
   });
 
   Map<String, dynamic> toJson() => {
-    'timestamp': timestamp.toIso8601String(),
-    'level': level,
-    'message': message,
-    'details': details,
-  };
+        'timestamp': timestamp.toIso8601String(),
+        'level': level,
+        'message': message,
+        'details': details,
+      };
 
   @override
   String toString() {
-    final time = '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
+    final time =
+        '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
     final icon = {
-      'info': 'ℹ️',
-      'success': '✅',
-      'warning': '⚠️',
-      'error': '❌',
-      'debug': '🔍',
-    }[level] ?? '📝';
+          'info': 'ℹ️',
+          'success': '✅',
+          'warning': '⚠️',
+          'error': '❌',
+          'debug': '🔍',
+        }[level] ??
+        '📝';
     return '[$time] $icon $message${details != null ? '\n  → $details' : ''}';
   }
 }
@@ -72,20 +74,20 @@ class _ScanResult {
   });
 
   Map<String, dynamic> toJson() => {
-    'ip': ip,
-    'found': found,
-    'url': url,
-    'name': name,
-    'error': error,
-  };
+        'ip': ip,
+        'found': found,
+        'url': url,
+        'name': name,
+        'error': error,
+      };
 
   factory _ScanResult.fromJson(Map<String, dynamic> json) => _ScanResult(
-    ip: json['ip'] as String,
-    found: json['found'] as bool,
-    url: json['url'] as String?,
-    name: json['name'] as String?,
-    error: json['error'] as String?,
-  );
+        ip: json['ip'] as String,
+        found: json['found'] as bool,
+        url: json['url'] as String?,
+        name: json['name'] as String?,
+        error: json['error'] as String?,
+      );
 }
 
 /// Service for discovering OpenClaw gateways on the local network
@@ -106,6 +108,13 @@ class DiscoveryService {
   static const int _maxHistoryItems = 10;
   static const Duration _scanTimeout = Duration(seconds: 8);
   static const Duration _connectionTimeout = Duration(seconds: 5);
+  static const List<String> _probeEndpoints = [
+    '/health',
+    '/api/gateway',
+    '/api/status',
+    '/status',
+    '/api/health',
+  ];
 
   // Scanning configuration
   static const int _isolateBatchSize = 25; // IPs per batch
@@ -175,7 +184,8 @@ class DiscoveryService {
     }
 
     // Also print to console for debugging
-    debugPrint('[DiscoveryService] $message${details != null ? ' | $details' : ''}');
+    debugPrint(
+        '[DiscoveryService] $message${details != null ? ' | $details' : ''}');
   }
 
   /// Clear all logs
@@ -258,7 +268,8 @@ class DiscoveryService {
       final localhostGateway = await _checkLocalhost();
       if (localhostGateway != null) {
         found.add(localhostGateway);
-        _log('success', 'Gateway found on localhost!', details: localhostGateway.url);
+        _log('success', 'Gateway found on localhost!',
+            details: localhostGateway.url);
       }
 
       // STEP 2: Try mDNS discovery
@@ -283,7 +294,8 @@ class DiscoveryService {
       for (final gateway in localGateways) {
         if (!found.any((g) => g.url == gateway.url)) {
           found.add(gateway);
-          _log('success', 'Gateway found on local subnet', details: gateway.url);
+          _log('success', 'Gateway found on local subnet',
+              details: gateway.url);
         }
       }
 
@@ -295,7 +307,8 @@ class DiscoveryService {
         for (final gateway in commonGateways) {
           if (!found.any((g) => g.url == gateway.url)) {
             found.add(gateway);
-            _log('success', 'Gateway found in common range', details: gateway.url);
+            _log('success', 'Gateway found in common range',
+                details: gateway.url);
           }
         }
       }
@@ -314,8 +327,10 @@ class DiscoveryService {
       _discovered = found;
       if (found.isNotEmpty) {
         _log('success', 'Discovery complete!',
-            details: '${found.length} gateway(s) found: ${found.map((g) => g.url).join(", ")}');
-        _updateProgress(100, _totalIpsToScan, 'Found ${found.length} gateway(s)!');
+            details:
+                '${found.length} gateway(s) found: ${found.map((g) => g.url).join(", ")}');
+        _updateProgress(
+            100, _totalIpsToScan, 'Found ${found.length} gateway(s)!');
       } else {
         _log('warning', 'Discovery complete - no gateways found',
             details: 'Use Manual tab to enter gateway IP directly');
@@ -355,7 +370,11 @@ class DiscoveryService {
 
   /// Check localhost for on-device gateway
   Future<GatewayConnection?> _checkLocalhost() async {
-    return await _quickCheckGateway('127.0.0.1', 18789, name: 'Local Gateway (This Device)');
+    return await _quickCheckGateway(
+      '127.0.0.1',
+      18789,
+      name: 'Local Gateway (This Device)',
+    );
   }
 
   /// Scan using mDNS/Bonjour with improved Android compatibility
@@ -383,7 +402,8 @@ class DiscoveryService {
             }
             return interfaces;
           } catch (e) {
-            _log('warning', 'Error listing network interfaces', details: e.toString());
+            _log('warning', 'Error listing network interfaces',
+                details: e.toString());
             return [];
           }
         },
@@ -393,7 +413,8 @@ class DiscoveryService {
       // Query for PTR records with shorter timeout
       _log('info', 'Querying mDNS PTR records...');
       final ptrRecords = await _queryPtrRecords();
-      _log('info', 'PTR query complete', details: 'Found ${ptrRecords.length} service(s)');
+      _log('info', 'PTR query complete',
+          details: 'Found ${ptrRecords.length} service(s)');
 
       // Resolve each service
       for (final serviceName in ptrRecords) {
@@ -404,7 +425,8 @@ class DiscoveryService {
             found.add(gateway);
           }
         } catch (e) {
-          _log('warning', 'Error resolving service $serviceName', details: e.toString());
+          _log('warning', 'Error resolving service $serviceName',
+              details: e.toString());
         }
       }
     } catch (e) {
@@ -426,9 +448,11 @@ class DiscoveryService {
     final List<String> serviceNames = [];
 
     try {
-      await for (final PtrResourceRecord ptr in _mdnsClient!.lookup<PtrResourceRecord>(
-        ResourceRecordQuery.serverPointer('$_serviceType.local.'),
-      ).timeout(_scanTimeout)) {
+      await for (final PtrResourceRecord ptr in _mdnsClient!
+          .lookup<PtrResourceRecord>(
+            ResourceRecordQuery.serverPointer('$_serviceType.local.'),
+          )
+          .timeout(_scanTimeout)) {
         _log('debug', 'PTR record received', details: ptr.domainName);
         serviceNames.add(ptr.domainName);
       }
@@ -449,9 +473,11 @@ class DiscoveryService {
       int? port;
 
       _log('debug', 'Querying SRV record for $serviceName');
-      await for (final SrvResourceRecord srv in _mdnsClient!.lookup<SrvResourceRecord>(
-        ResourceRecordQuery.service(serviceName),
-      ).timeout(const Duration(seconds: 5))) {
+      await for (final SrvResourceRecord srv in _mdnsClient!
+          .lookup<SrvResourceRecord>(
+            ResourceRecordQuery.service(serviceName),
+          )
+          .timeout(const Duration(seconds: 5))) {
         host = srv.target;
         port = srv.port;
         _log('debug', 'SRV record received', details: 'host=$host, port=$port');
@@ -467,9 +493,11 @@ class DiscoveryService {
       Map<String, String> txtRecords = {};
       try {
         _log('debug', 'Querying TXT records for $serviceName');
-        await for (final TxtResourceRecord txt in _mdnsClient!.lookup<TxtResourceRecord>(
-          ResourceRecordQuery.text(serviceName),
-        ).timeout(const Duration(seconds: 3))) {
+        await for (final TxtResourceRecord txt in _mdnsClient!
+            .lookup<TxtResourceRecord>(
+              ResourceRecordQuery.text(serviceName),
+            )
+            .timeout(const Duration(seconds: 3))) {
           final text = txt.text;
           final parts = text.split('=');
           if (parts.length >= 2) {
@@ -495,14 +523,15 @@ class DiscoveryService {
             _log('debug', 'Hostname resolved', details: '$host → $ip');
           }
         } catch (e) {
-          _log('warning', 'Could not resolve hostname $ip', details: e.toString());
+          _log('warning', 'Could not resolve hostname $ip',
+              details: e.toString());
         }
       }
 
       // Build gateway connection
       final gatewayName = txtRecords['name'] ??
-                         txtRecords['hostname'] ??
-                         _extractGatewayName(serviceName);
+          txtRecords['hostname'] ??
+          _extractGatewayName(serviceName);
 
       return GatewayConnection(
         name: gatewayName,
@@ -512,7 +541,8 @@ class DiscoveryService {
         isOnline: true,
       );
     } catch (e) {
-      _log('error', 'Error resolving service $serviceName', details: e.toString());
+      _log('error', 'Error resolving service $serviceName',
+          details: e.toString());
       return null;
     }
   }
@@ -560,7 +590,8 @@ class DiscoveryService {
         }
       }
     } catch (e) {
-      _log('warning', 'Error detecting network interfaces', details: e.toString());
+      _log('warning', 'Error detecting network interfaces',
+          details: e.toString());
     }
 
     if (subnets.isEmpty) {
@@ -576,7 +607,8 @@ class DiscoveryService {
       }
     }
 
-    _log('info', 'Scanning ${ipsToScan.length} IPs across ${subnets.length} subnet(s)');
+    _log('info',
+        'Scanning ${ipsToScan.length} IPs across ${subnets.length} subnet(s)');
     _totalIpsToScan += ipsToScan.length;
 
     // Scan using parallel isolates
@@ -597,7 +629,8 @@ class DiscoveryService {
       }
     }
 
-    _log('info', 'Local subnet scan complete', details: 'Found ${found.length} gateway(s)');
+    _log('info', 'Local subnet scan complete',
+        details: 'Found ${found.length} gateway(s)');
     return found;
   }
 
@@ -611,7 +644,13 @@ class DiscoveryService {
     final List<String> ipsToScan = [];
 
     // Common subnets with likely gateway positions
-    final commonSubnets = ['192.168.0', '192.168.1', '192.168.2', '10.0.0', '10.0.1'];
+    final commonSubnets = [
+      '192.168.0',
+      '192.168.1',
+      '192.168.2',
+      '10.0.0',
+      '10.0.1'
+    ];
     final commonIds = [1, 2, 10, 50, 100, 101, 150, 200, 254];
 
     for (final subnet in commonSubnets) {
@@ -641,7 +680,8 @@ class DiscoveryService {
       }
     }
 
-    _log('info', 'Common range scan complete', details: 'Found ${found.length} gateway(s)');
+    _log('info', 'Common range scan complete',
+        details: 'Found ${found.length} gateway(s)');
     return found;
   }
 
@@ -658,8 +698,10 @@ class DiscoveryService {
 
     // Scan common Tailscale ranges (sample every 32 IPs to reduce scan time)
     for (int i = 64; i <= 127; i++) {
-      for (int j = 0; j <= 255; j += 8) { // Sample every 8th
-        for (int k = 1; k <= 254; k += 32) { // Sample every 32nd
+      for (int j = 0; j <= 255; j += 8) {
+        // Sample every 8th
+        for (int k = 1; k <= 254; k += 32) {
+          // Sample every 32nd
           ipsToScan.add('100.$i.$j.$k');
         }
       }
@@ -695,12 +737,14 @@ class DiscoveryService {
       }
     }
 
-    _log('info', 'Tailscale scan complete', details: 'Found ${found.length} gateway(s)');
+    _log('info', 'Tailscale scan complete',
+        details: 'Found ${found.length} gateway(s)');
     return found;
   }
 
   /// Scan IPs in parallel using compute()
-  Future<List<_ScanResult>> _scanIPsInParallel(List<String> ips, {required int port}) async {
+  Future<List<_ScanResult>> _scanIPsInParallel(List<String> ips,
+      {required int port}) async {
     final List<_ScanResult> allResults = [];
 
     _log('debug', 'Scanning ${ips.length} IPs in parallel using compute()');
@@ -710,10 +754,11 @@ class DiscoveryService {
       final batch = ips.skip(i).take(_isolateBatchSize).toList();
 
       // Create futures for each IP in the batch
-      final futures = batch.map((ip) => compute<_ScanIpParams, Map<String, dynamic>>(
-        _checkGatewayIsolate,
-        _ScanIpParams(ip: ip, port: port, timeoutMs: _ipTimeoutMs),
-      ));
+      final futures =
+          batch.map((ip) => compute<_ScanIpParams, Map<String, dynamic>>(
+                _checkGatewayIsolate,
+                _ScanIpParams(ip: ip, port: port, timeoutMs: _ipTimeoutMs),
+              ));
 
       // Wait for all scans in this batch
       final results = await Future.wait(futures);
@@ -726,8 +771,10 @@ class DiscoveryService {
 
       // Update progress
       _ipsScanned += batch.length;
-      final percent = _totalIpsToScan > 0 ? (_ipsScanned * 100 ~/ _totalIpsToScan) : 0;
-      _updateProgress(percent, _ipsScanned, 'Scanned $_ipsScanned/$_totalIpsToScan IPs...');
+      final percent =
+          _totalIpsToScan > 0 ? (_ipsScanned * 100 ~/ _totalIpsToScan) : 0;
+      _updateProgress(
+          percent, _ipsScanned, 'Scanned $_ipsScanned/$_totalIpsToScan IPs...');
 
       // Small delay to prevent overwhelming the system
       await Future.delayed(const Duration(milliseconds: 10));
@@ -738,80 +785,111 @@ class DiscoveryService {
 
   /// Isolate function for checking a single gateway
   /// This runs in a separate isolate using compute()
-  static Future<Map<String, dynamic>> _checkGatewayIsolate(_ScanIpParams params) async {
+  static Future<Map<String, dynamic>> _checkGatewayIsolate(
+      _ScanIpParams params) async {
     try {
       final client = HttpClient();
       client.connectionTimeout = Duration(milliseconds: params.timeoutMs);
 
-      final request = await client.getUrl(Uri.parse('http://${params.ip}:${params.port}/health'));
-      final response = await request.close().timeout(
-        Duration(milliseconds: params.timeoutMs),
-      );
+      for (final endpoint in _probeEndpoints) {
+        final request = await client
+            .getUrl(Uri.parse('http://${params.ip}:${params.port}$endpoint'));
+        final response = await request.close().timeout(
+              Duration(milliseconds: params.timeoutMs),
+            );
 
-      if (response.statusCode == 200) {
+        if (response.statusCode != 200) {
+          continue;
+        }
+
         final body = await response.transform(utf8.decoder).join();
         try {
           final json = jsonDecode(body);
-          if (json['ok'] == true) {
-            return _ScanResult(
-              ip: params.ip,
-              found: true,
-              url: 'http://${params.ip}:${params.port}',
-              name: 'OpenClaw Gateway (${params.ip})',
-            ).toJson();
+          if (endpoint == '/health' &&
+              json is Map<String, dynamic> &&
+              json['ok'] != true &&
+              json['status'] != 'live') {
+            continue;
           }
         } catch (e) {
-          // Not valid JSON, but 200 OK - might still be valid
-          return _ScanResult(
-            ip: params.ip,
-            found: true,
-            url: 'http://${params.ip}:${params.port}',
-            name: 'OpenClaw Gateway (${params.ip})',
-          ).toJson();
+          // Non-JSON bodies are acceptable for discovery as long as the
+          // gateway responds successfully on a known endpoint.
         }
+
+        return _ScanResult(
+          ip: params.ip,
+          found: true,
+          url: 'http://${params.ip}:${params.port}',
+          name: 'OpenClaw Gateway (${params.ip})',
+        ).toJson();
       }
+
       return _ScanResult(ip: params.ip, found: false).toJson();
     } on TimeoutException {
-      return _ScanResult(ip: params.ip, found: false, error: 'Timeout').toJson();
+      return _ScanResult(ip: params.ip, found: false, error: 'Timeout')
+          .toJson();
     } catch (e) {
-      return _ScanResult(ip: params.ip, found: false, error: e.toString()).toJson();
+      return _ScanResult(ip: params.ip, found: false, error: e.toString())
+          .toJson();
     }
   }
 
   /// Quick check if a host is running OpenClaw (non-isolate version)
-  Future<GatewayConnection?> _quickCheckGateway(String ip, int port, {String? name}) async {
-    try {
-      final url = 'http://$ip:$port';
-      final response = await http.get(
-        Uri.parse('$url/health'),
-      ).timeout(const Duration(milliseconds: 1000));
+  Future<GatewayConnection?> _quickCheckGateway(String ip, int port,
+      {String? name}) async {
+    return probeGatewayUrl('http://$ip:$port', name: name ?? 'OpenClaw ($ip)');
+  }
 
-      if (response.statusCode == 200) {
-        // Validate it's actually an OpenClaw gateway
-        try {
-          final json = jsonDecode(response.body);
-          if (json['ok'] == true || json['status'] == 'live') {
-            return GatewayConnection(
-              name: name ?? 'OpenClaw ($ip)',
-              url: url,
-              ip: ip,
-              port: port,
-              isOnline: true,
-            );
-          }
-        } catch (e) {
-          // Not valid JSON, but 200 OK might still be valid
-          return GatewayConnection(
-            name: name ?? 'OpenClaw ($ip)',
-            url: url,
-            ip: ip,
-            port: port,
-            isOnline: true,
-          );
+  /// Probe a specific base URL using the same fallback endpoints as the app.
+  Future<GatewayConnection?> probeGatewayUrl(
+    String url, {
+    String? name,
+    String? token,
+  }) async {
+    try {
+      final normalized =
+          url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+      final uri = Uri.parse(normalized);
+      final headers = token != null
+          ? {'Authorization': 'Bearer $token'}
+          : <String, String>{};
+
+      for (final endpoint in _probeEndpoints) {
+        final response = await http
+            .get(
+              Uri.parse('$normalized$endpoint'),
+              headers: headers,
+            )
+            .timeout(const Duration(milliseconds: 1200));
+
+        if (response.statusCode != 200) {
+          continue;
         }
+
+        if (endpoint == '/health') {
+          try {
+            final json = jsonDecode(response.body);
+            if (json is Map<String, dynamic> &&
+                json['ok'] != true &&
+                json['status'] != 'live') {
+              continue;
+            }
+          } catch (_) {
+            // A successful health response is enough for discovery.
+          }
+        }
+
+        return GatewayConnection(
+          name: name ?? uri.host,
+          url: normalized,
+          ip: uri.host,
+          port: uri.hasPort ? uri.port : 18789,
+          token: token,
+          isOnline: true,
+        );
       }
     } catch (e) {
-      // Connection failed - don't log every failure to avoid spam
+      // Intentionally silent for probing; callers handle misses.
     }
     return null;
   }
@@ -832,7 +910,7 @@ class DiscoveryService {
   Future<Map<String, dynamic>> testConnection(GatewayConnection gateway) async {
     _log('info', 'Testing connection to ${gateway.url}');
 
-    final endpoints = ['/health', '/api/health', '/status'];
+    const endpoints = _probeEndpoints;
     final errors = <String>[];
 
     for (final endpoint in endpoints) {
@@ -840,12 +918,14 @@ class DiscoveryService {
         final url = '${gateway.url}$endpoint';
         _log('debug', 'Trying endpoint: $url');
 
-        final response = await http.get(
-          Uri.parse(url),
-          headers: gateway.token != null
-              ? {'Authorization': 'Bearer ${gateway.token}'}
-              : {},
-        ).timeout(_connectionTimeout);
+        final response = await http
+            .get(
+              Uri.parse(url),
+              headers: gateway.token != null
+                  ? {'Authorization': 'Bearer ${gateway.token}'}
+                  : {},
+            )
+            .timeout(_connectionTimeout);
 
         if (response.statusCode == 200) {
           _log('success', 'Connection test passed for ${gateway.url}');
@@ -885,15 +965,18 @@ class DiscoveryService {
     final osErrorMessage = e.osError?.message;
     final osError = osErrorMessage?.toLowerCase() ?? '';
 
-    if (message.contains('no route to host') || osError.contains('no route to host')) {
+    if (message.contains('no route to host') ||
+        osError.contains('no route to host')) {
       return 'No route to host - Gateway unreachable';
     }
 
-    if (message.contains('connection refused') || osError.contains('connection refused')) {
+    if (message.contains('connection refused') ||
+        osError.contains('connection refused')) {
       return 'Connection refused - Gateway not listening';
     }
 
-    if (message.contains('network is unreachable') || osError.contains('network is unreachable')) {
+    if (message.contains('network is unreachable') ||
+        osError.contains('network is unreachable')) {
       return 'Network unreachable - Check WiFi connection';
     }
 
@@ -959,7 +1042,8 @@ Troubleshooting:
     try {
       final List<dynamic> decoded = jsonDecode(historyJson);
       return decoded
-          .map((item) => GatewayConnection.fromJson(item as Map<String, dynamic>))
+          .map((item) =>
+              GatewayConnection.fromJson(item as Map<String, dynamic>))
           .toList();
     } catch (e) {
       _log('error', 'Error loading history', details: e.toString());

@@ -39,7 +39,7 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
   @override
   Widget build(BuildContext context) {
     final state = _monitor.state;
-    
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -73,7 +73,7 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  
+
                   // Status text
                   Expanded(
                     child: Column(
@@ -83,10 +83,13 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
                           children: [
                             Text(
                               state.statusText,
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: _getStatusColor(state.status),
-                              ),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                    color: _getStatusColor(state.status),
+                                  ),
                             ),
                             if (state.retryCountdown > 0) ...[
                               const SizedBox(width: 8),
@@ -119,7 +122,7 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
                       ],
                     ),
                   ),
-                  
+
                   // Arrow or action
                   if (state.isDisconnected || state.hasError)
                     TextButton(
@@ -133,7 +136,7 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
                     ),
                 ],
               ),
-              
+
               // Connection details (when connected)
               if (state.isConnected && state.gatewayInfo != null) ...[
                 const Divider(height: 24),
@@ -146,33 +149,39 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
     );
   }
 
-  Widget _buildConnectionDetails(BuildContext context, AppConnectionState state) {
+  Widget _buildConnectionDetails(
+      BuildContext context, AppConnectionState state) {
     final info = state.gatewayInfo!;
-    
+    final agentCount = info.agents?.length ?? 0;
+    final activeAgents = info.agents
+            ?.where((agent) => agent.isActive || agent.status == 'active')
+            .length ??
+        0;
+    final nodeCount = info.nodes?.length ?? 0;
+
     return Row(
       children: [
-        // Gateway info
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildDetailRow(
                 context,
-                'Version',
-                info.version,
-                Icons.info_outline,
+                'Sessions',
+                '$agentCount total • $activeAgents active',
+                Icons.people_alt_outlined,
               ),
               const SizedBox(height: 4),
               _buildDetailRow(
                 context,
-                'Uptime',
-                _formatUptime(info.uptime),
-                Icons.timer_outlined,
+                'Nodes',
+                '$nodeCount connected',
+                Icons.hub_outlined,
               ),
             ],
           ),
         ),
-        
+
         // Latency
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -201,7 +210,8 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
     );
   }
 
-  Widget _buildDetailRow(BuildContext context, String label, String value, IconData icon) {
+  Widget _buildDetailRow(
+      BuildContext context, String label, String value, IconData icon) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -214,14 +224,14 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
         Text(
           '$label: ',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.outline,
-          ),
+                color: Theme.of(context).colorScheme.outline,
+              ),
         ),
         Text(
           value,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            fontWeight: FontWeight.w500,
-          ),
+                fontWeight: FontWeight.w500,
+              ),
         ),
       ],
     );
@@ -269,19 +279,6 @@ class _ConnectionStatusCardState extends State<ConnectionStatusCard> {
     return Colors.red;
   }
 
-  String _formatUptime(int seconds) {
-    final hours = seconds ~/ 3600;
-    final minutes = (seconds % 3600) ~/ 60;
-    if (hours > 24) {
-      final days = hours ~/ 24;
-      return '${days}d ${hours % 24}h';
-    }
-    if (hours > 0) {
-      return '${hours}h ${minutes}m';
-    }
-    return '${minutes}m';
-  }
-
   void _showConnectionDetails(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -324,7 +321,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
-          
+
           // Title
           Row(
             children: [
@@ -340,7 +337,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 24),
-          
+
           // Status
           _buildDetailTile(
             context,
@@ -349,7 +346,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
             Icons.circle,
             _getStatusColor(state.status),
           ),
-          
+
           // Gateway URL
           if (state.gatewayUrl != null)
             _buildDetailTile(
@@ -359,7 +356,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
               Icons.link,
               null,
             ),
-          
+
           // Gateway Name
           if (state.gatewayName != null)
             _buildDetailTile(
@@ -369,27 +366,34 @@ class _ConnectionDetailsSheet extends StatelessWidget {
               Icons.label,
               null,
             ),
-          
-          // Version
+
           if (state.gatewayInfo != null)
             _buildDetailTile(
               context,
-              'Version',
-              state.gatewayInfo!.version,
-              Icons.info_outline,
+              'Sessions',
+              '${state.gatewayInfo!.agents?.length ?? 0} total',
+              Icons.people_alt_outlined,
               null,
             ),
-          
-          // Uptime
+
           if (state.gatewayInfo != null)
             _buildDetailTile(
               context,
-              'Uptime',
-              _formatUptime(state.gatewayInfo!.uptime),
-              Icons.timer_outlined,
+              'Nodes',
+              '${state.gatewayInfo!.nodes?.length ?? 0} connected',
+              Icons.hub_outlined,
               null,
             ),
-          
+
+          if (state.gatewayInfo?.isPaused == true)
+            _buildDetailTile(
+              context,
+              'Mode',
+              'Paused',
+              Icons.pause_circle_outline,
+              Colors.orange,
+            ),
+
           // Latency
           if (state.lastPing != null)
             _buildDetailTile(
@@ -399,7 +403,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
               Icons.speed,
               null,
             ),
-          
+
           // Last Ping
           if (state.lastPing != null)
             _buildDetailTile(
@@ -409,7 +413,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
               Icons.access_time,
               null,
             ),
-          
+
           // Error message
           if (state.errorMessage != null)
             _buildDetailTile(
@@ -419,9 +423,9 @@ class _ConnectionDetailsSheet extends StatelessWidget {
               Icons.error_outline,
               Colors.red,
             ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Actions
           Row(
             children: [
@@ -449,7 +453,7 @@ class _ConnectionDetailsSheet extends StatelessWidget {
               ),
             ],
           ),
-          
+
           // Bottom padding for safe area
           SizedBox(height: MediaQuery.of(context).padding.bottom),
         ],
@@ -483,9 +487,9 @@ class _ConnectionDetailsSheet extends StatelessWidget {
             child: Text(
               value,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w500,
-                color: color,
-              ),
+                    fontWeight: FontWeight.w500,
+                    color: color,
+                  ),
               textAlign: TextAlign.end,
             ),
           ),
@@ -507,23 +511,10 @@ class _ConnectionDetailsSheet extends StatelessWidget {
     }
   }
 
-  String _formatUptime(int seconds) {
-    final hours = seconds ~/ 3600;
-    final minutes = (seconds % 3600) ~/ 60;
-    if (hours > 24) {
-      final days = hours ~/ 24;
-      return '${days}d ${hours % 24}h ${minutes}m';
-    }
-    if (hours > 0) {
-      return '${hours}h ${minutes}m';
-    }
-    return '${minutes}m';
-  }
-
   String _formatTime(DateTime time) {
     final now = DateTime.now();
     final diff = now.difference(time);
-    
+
     if (diff.inSeconds < 60) {
       return '${diff.inSeconds}s ago';
     }

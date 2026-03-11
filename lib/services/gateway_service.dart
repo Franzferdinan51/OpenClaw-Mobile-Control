@@ -42,7 +42,6 @@ class GatewayService {
   // Timeout configurations
   static const Duration _defaultTimeout = Duration(seconds: 15);
   static const Duration _shortTimeout = Duration(seconds: 5);
-  static const Duration _longTimeout = Duration(seconds: 30);
 
   GatewayService({this.baseUrl = 'http://127.0.0.1:18789', this.token});
 
@@ -214,6 +213,7 @@ class GatewayService {
       {'path': '/api/status', 'name': 'Status API'},
       {'path': '/health', 'name': 'Health Check'},
     ];
+    final failures = <String>[];
 
     for (final endpoint in endpoints) {
       try {
@@ -229,31 +229,27 @@ class GatewayService {
             'success': true,
             'status': response.statusCode,
             'endpoint': endpoint['name'],
-          };
-        } else {
-          return {
-            'success': false,
-            'error': 'HTTP ${response.statusCode}',
-            'status': response.statusCode,
-            'endpoint': endpoint['name'],
+            'path': endpoint['path'],
           };
         }
+        failures.add('${endpoint['name']}: HTTP ${response.statusCode}');
       } on TimeoutException {
-        // Try next endpoint
+        failures.add('${endpoint['name']}: Timeout');
       } on SocketException catch (e) {
-        return {
-          'success': false,
-          'error': 'Connection refused: ${e.message}',
-          'endpoint': endpoint['name'],
-        };
+        failures.add('${endpoint['name']}: ${e.message}');
       } on FormatException {
         return {'success': false, 'error': 'Invalid URL format'};
       } catch (e) {
-        // Try next endpoint
+        failures.add('${endpoint['name']}: $e');
       }
     }
 
-    return {'success': false, 'error': 'All endpoints failed'};
+    return {
+      'success': false,
+      'error':
+          failures.isNotEmpty ? failures.join(' • ') : 'All endpoints failed',
+      'endpoint': 'Gateway probe',
+    };
   }
 
   // ============================================================
@@ -312,16 +308,36 @@ class GatewayService {
           final session = s as Map<String, dynamic>;
           return session['isActive'] == true || session['status'] == 'active';
         }).length;
+        int subagentCount = sessions.where((s) {
+          final session = s as Map<String, dynamic>;
+          final kind = (session['kind'] ?? '').toString();
+          final key =
+              (session['key'] ?? session['sessionKey'] ?? '').toString();
+          return session['isSubagent'] == true ||
+              kind == 'subagent' ||
+              key.contains(':subagent:');
+        }).length;
+        int toolsInFlight = sessions.where((s) {
+          final session = s as Map<String, dynamic>;
+          final toolName = (session['currentToolName'] ?? '').toString();
+          return toolName.isNotEmpty;
+        }).length;
         int totalTokens = 0;
         for (var s in sessions) {
           final session = s as Map<String, dynamic>;
-          totalTokens +=
-              (session['totalTokens'] ?? session['total_tokens'] ?? 0) as int;
+          final tokenValue = session['totalTokens'] ?? session['total_tokens'];
+          if (tokenValue is num) {
+            totalTokens += tokenValue.toInt();
+          } else if (tokenValue is String) {
+            totalTokens += int.tryParse(tokenValue) ?? 0;
+          }
         }
 
         return {
           'totalAgents': totalAgents,
           'activeAgents': activeAgents,
+          'subagentCount': subagentCount,
+          'toolsInFlight': toolsInFlight,
           'totalTokens': totalTokens,
           'timestamp': json['timestamp'],
         };
@@ -366,15 +382,17 @@ class GatewayService {
     try {
       // Get all agent sessions first
       final agents = await getAgents();
-      if (agents == null || agents.isEmpty)
+      if (agents == null || agents.isEmpty) {
         return {'ok': false, 'error': 'No agents found'};
+      }
 
       // Filter for main agents (not subagents)
       final mainAgents = agents.where((a) => !a.isSubagent).toList();
       final sessionKeys = mainAgents.map((a) => a.key).toList();
 
-      if (sessionKeys.isEmpty)
+      if (sessionKeys.isEmpty) {
         return {'ok': false, 'error': 'No main agents found'};
+      }
 
       final response = await http
           .post(
@@ -415,7 +433,7 @@ class GatewayService {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final result = json['result'] as Map<String, dynamic>?;
         final messages = (result != null && result['messages'] is List)
-            ? result!['messages'] as List
+            ? result['messages'] as List
             : (json['messages'] as List?) ?? (json['history'] as List?) ?? [];
 
         if (messages.isNotEmpty) {

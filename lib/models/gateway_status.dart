@@ -1,8 +1,7 @@
-/// Gateway status model
-/// 
-/// Handles both:
-/// - /health endpoint: {"ok":true,"status":"live"}
-/// - Full status from WebSocket RPC
+// Gateway status model.
+// Handles both:
+// - /health endpoint: {"ok":true,"status":"live"}
+// - Full status from WebSocket RPC
 
 double? _asDouble(dynamic value) {
   if (value == null) return null;
@@ -51,7 +50,7 @@ class GatewayStatus {
   });
 
   /// Parse from /health endpoint response
-  /// 
+  ///
   /// /health returns: {"ok":true,"status":"live"}
   factory GatewayStatus.fromHealthJson(Map<String, dynamic> json) {
     final system = _asMap(json['system']);
@@ -62,11 +61,19 @@ class GatewayStatus {
       version: json['version'] ?? system?['version'] ?? 'unknown',
       uptime: _asInt(json['uptime']) ??
           ((_asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs'])) != null
-              ? (((_asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs']))! ~/ 1000))
+              ? (((_asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs']))! ~/
+                  1000))
               : 0),
-      cpuPercent: _asDouble(json['cpu_percent']) ?? _asDouble(system?['cpu_percent']) ?? _asDouble(system?['cpu']),
-      memoryUsed: _asInt(json['memory_used']) ?? _asInt(memory?['used']) ?? _asInt(system?['memory_used']) ?? _asInt(system?['rss']),
-      memoryTotal: _asInt(json['memory_total']) ?? _asInt(memory?['total']) ?? _asInt(system?['memory_total']),
+      cpuPercent: _asDouble(json['cpu_percent']) ??
+          _asDouble(system?['cpu_percent']) ??
+          _asDouble(system?['cpu']),
+      memoryUsed: _asInt(json['memory_used']) ??
+          _asInt(memory?['used']) ??
+          _asInt(system?['memory_used']) ??
+          _asInt(system?['rss']),
+      memoryTotal: _asInt(json['memory_total']) ??
+          _asInt(memory?['total']) ??
+          _asInt(system?['memory_total']),
       isPaused: json['paused'] == true,
       rawData: json,
     );
@@ -75,14 +82,27 @@ class GatewayStatus {
   /// Parse from full gateway status (WebSocket RPC or /api/gateway)
   factory GatewayStatus.fromJson(Map<String, dynamic> json) {
     // Handle different response formats
-    final gateway = _asMap(json['gateway']) ?? json;
+    final result = _asMap(json['result']);
+    final gateway =
+        _asMap(json['gateway']) ?? _asMap(result?['gateway']) ?? json;
     final system = _asMap(json['system']) ?? _asMap(gateway['system']);
-    final memory = _asMap(system?['memory']) ?? _asMap(gateway['memory']) ?? _asMap(json['memory']);
+    final memory = _asMap(system?['memory']) ??
+        _asMap(gateway['memory']) ??
+        _asMap(json['memory']);
+    final agentsJson = (json['agents'] as List?) ??
+        (json['sessions'] as List?) ??
+        (result?['agents'] as List?) ??
+        (result?['sessions'] as List?);
+    final nodesJson = (json['nodes'] as List?) ?? (result?['nodes'] as List?);
+    final cronsJson = (json['crons'] as List?) ?? (result?['crons'] as List?);
 
     return GatewayStatus(
-      online: gateway['status'] == 'online' || 
-              gateway['status'] == 'live' || 
-              json['ok'] == true,
+      online: gateway['status'] == 'online' ||
+          gateway['status'] == 'live' ||
+          json['ok'] == true ||
+          result?['ok'] == true ||
+          agentsJson != null ||
+          nodesJson != null,
       version: gateway['version'] ??
           json['version'] ??
           system?['version'] ??
@@ -91,8 +111,14 @@ class GatewayStatus {
           'unknown',
       uptime: _asInt(gateway['uptime']) ??
           _asInt(json['uptime']) ??
-          ((_asInt(gateway['uptimeMs']) ?? _asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs'])) != null
-              ? (((_asInt(gateway['uptimeMs']) ?? _asInt(json['uptimeMs']) ?? _asInt(system?['uptimeMs']))! ~/ 1000))
+          ((_asInt(gateway['uptimeMs']) ??
+                      _asInt(json['uptimeMs']) ??
+                      _asInt(system?['uptimeMs'])) !=
+                  null
+              ? (((_asInt(gateway['uptimeMs']) ??
+                      _asInt(json['uptimeMs']) ??
+                      _asInt(system?['uptimeMs']))! ~/
+                  1000))
               : 0),
       cpuPercent: _asDouble(gateway['cpu_percent']) ??
           _asDouble(json['cpu_percent']) ??
@@ -107,45 +133,39 @@ class GatewayStatus {
           _asInt(json['memory_total']) ??
           _asInt(memory?['total']) ??
           _asInt(system?['memory_total']),
-      agents: (json['agents'] as List?)
-          ?.map((a) => AgentInfo.fromJson(a))
-          .toList(),
-      nodes: (json['nodes'] as List?)
-          ?.map((n) => NodeInfo.fromJson(n))
-          .toList(),
-      crons: (json['crons'] as List?)
-          ?.map((c) => CronInfo.fromJson(c))
-          .toList(),
+      agents: agentsJson?.map((a) => AgentInfo.fromJson(a)).toList(),
+      nodes: nodesJson?.map((n) => NodeInfo.fromJson(n)).toList(),
+      crons: cronsJson?.map((c) => CronInfo.fromJson(c)).toList(),
       isPaused: json['paused'] == true || gateway['paused'] == true,
       rawData: json,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'gateway': {
-      'status': online ? 'online' : 'offline',
-      'version': version,
-      'uptime': uptime,
-      'cpu_percent': cpuPercent,
-      'memory_used': memoryUsed,
-      'memory_total': memoryTotal,
-      'paused': isPaused,
-    },
-    'agents': agents?.map((a) => a.toJson()).toList(),
-    'nodes': nodes?.map((n) => n.toJson()).toList(),
-    'crons': crons?.map((c) => c.toJson()).toList(),
-    'paused': isPaused,
-  };
+        'gateway': {
+          'status': online ? 'online' : 'offline',
+          'version': version,
+          'uptime': uptime,
+          'cpu_percent': cpuPercent,
+          'memory_used': memoryUsed,
+          'memory_total': memoryTotal,
+          'paused': isPaused,
+        },
+        'agents': agents?.map((a) => a.toJson()).toList(),
+        'nodes': nodes?.map((n) => n.toJson()).toList(),
+        'crons': crons?.map((c) => c.toJson()).toList(),
+        'paused': isPaused,
+      };
 
   /// Get formatted uptime string
   String get formattedUptime {
     if (uptime <= 0) return 'Unknown';
-    
+
     final duration = Duration(seconds: uptime);
     final days = duration.inDays;
     final hours = duration.inHours % 24;
     final minutes = duration.inMinutes % 60;
-    
+
     if (days > 0) {
       return '${days}d ${hours}h ${minutes}m';
     } else if (hours > 0) {
@@ -158,16 +178,18 @@ class GatewayStatus {
   /// Get formatted memory usage
   String? get formattedMemory {
     if (memoryUsed == null || memoryTotal == null) return null;
-    
+
     final used = memoryUsed! / 1024 / 1024; // MB
     final total = memoryTotal! / 1024 / 1024; // MB
-    
+
     return '${used.toStringAsFixed(1)} MB / ${total.toStringAsFixed(1)} MB';
   }
 
   /// Get memory usage percentage
   double? get memoryPercent {
-    if (memoryUsed == null || memoryTotal == null || memoryTotal == 0) return null;
+    if (memoryUsed == null || memoryTotal == null || memoryTotal == 0) {
+      return null;
+    }
     return (memoryUsed! / memoryTotal!) * 100;
   }
 }
@@ -201,13 +223,13 @@ class AgentInfo {
   }
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'status': status,
-    'current_task': currentTask,
-    'model': model,
-    'isActive': isActive,
-    'totalTokens': totalTokens,
-  };
+        'name': name,
+        'status': status,
+        'current_task': currentTask,
+        'model': model,
+        'isActive': isActive,
+        'totalTokens': totalTokens,
+      };
 }
 
 class NodeInfo {
@@ -233,11 +255,11 @@ class NodeInfo {
   }
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'status': status,
-    'connection_type': connectionType,
-    'ip': ip,
-  };
+        'name': name,
+        'status': status,
+        'connection_type': connectionType,
+        'ip': ip,
+      };
 }
 
 class CronInfo {
@@ -269,13 +291,13 @@ class CronInfo {
   }
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'schedule': schedule,
-    'enabled': enabled,
-    'last_run': lastRun,
-    'next_run': nextRun,
-    'status': status,
-  };
+        'name': name,
+        'schedule': schedule,
+        'enabled': enabled,
+        'last_run': lastRun,
+        'next_run': nextRun,
+        'status': status,
+      };
 }
 
 /// Connection Profile for remote gateway support
@@ -316,28 +338,28 @@ class ConnectionProfile {
       ),
       autoSelect: json['auto_select'] ?? false,
       networkType: json['network_type'],
-      lastConnected: json['last_connected'] != null 
-          ? DateTime.tryParse(json['last_connected']) 
+      lastConnected: json['last_connected'] != null
+          ? DateTime.tryParse(json['last_connected'])
           : null,
       useBiometric: json['use_biometric'] ?? false,
-      createdAt: json['created_at'] != null 
+      createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at']) ?? DateTime.now()
           : DateTime.now(),
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'url': url,
-    'token': token,
-    'connection_type': connectionType.name,
-    'auto_select': autoSelect,
-    'network_type': networkType,
-    'last_connected': lastConnected?.toIso8601String(),
-    'use_biometric': useBiometric,
-    'created_at': createdAt.toIso8601String(),
-  };
+        'id': id,
+        'name': name,
+        'url': url,
+        'token': token,
+        'connection_type': connectionType.name,
+        'auto_select': autoSelect,
+        'network_type': networkType,
+        'last_connected': lastConnected?.toIso8601String(),
+        'use_biometric': useBiometric,
+        'created_at': createdAt.toIso8601String(),
+      };
 
   ConnectionProfile copyWith({
     String? id,
@@ -367,10 +389,10 @@ class ConnectionProfile {
 }
 
 enum ConnectionType {
-  local,      // Local network (192.168.x.x)
-  tailscale,  // Tailscale Serve/Funnel
-  sshTunnel,  // SSH tunnel endpoint
-  custom,     // Custom HTTPS domain
+  local, // Local network (192.168.x.x)
+  tailscale, // Tailscale Serve/Funnel
+  sshTunnel, // SSH tunnel endpoint
+  custom, // Custom HTTPS domain
 }
 
 extension ConnectionTypeExtension on ConnectionType {
@@ -415,19 +437,20 @@ class CachedGatewayState {
 
   factory CachedGatewayState.fromJson(Map<String, dynamic> json) {
     return CachedGatewayState(
-      status: json['status'] != null 
-          ? GatewayStatus.fromJson(json['status']) 
+      status: json['status'] != null
+          ? GatewayStatus.fromJson(json['status'])
           : null,
-      cachedAt: DateTime.parse(json['cached_at'] ?? DateTime.now().toIso8601String()),
+      cachedAt:
+          DateTime.parse(json['cached_at'] ?? DateTime.now().toIso8601String()),
       profileId: json['profile_id'] ?? '',
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'status': status?.toJson(),
-    'cached_at': cachedAt.toIso8601String(),
-    'profile_id': profileId,
-  };
+        'status': status?.toJson(),
+        'cached_at': cachedAt.toIso8601String(),
+        'profile_id': profileId,
+      };
 
   bool get isStale => DateTime.now().difference(cachedAt).inMinutes > 5;
 }
@@ -453,20 +476,20 @@ class QueuedAction {
       id: json['id'] ?? '',
       endpoint: json['endpoint'] ?? '',
       body: json['body'] ?? {},
-      queuedAt: json['queued_at'] != null 
-          ? DateTime.parse(json['queued_at']) 
+      queuedAt: json['queued_at'] != null
+          ? DateTime.parse(json['queued_at'])
           : DateTime.now(),
       retryCount: json['retry_count'] ?? 0,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'endpoint': endpoint,
-    'body': body,
-    'queued_at': queuedAt.toIso8601String(),
-    'retry_count': retryCount,
-  };
+        'id': id,
+        'endpoint': endpoint,
+        'body': body,
+        'queued_at': queuedAt.toIso8601String(),
+        'retry_count': retryCount,
+      };
 }
 
 /// Connection test result
@@ -490,8 +513,8 @@ class ConnectionTestResult {
       success: json['success'] ?? false,
       latencyMs: json['latency_ms'] ?? 0,
       error: json['error'],
-      gatewayInfo: json['gateway_info'] != null 
-          ? GatewayStatus.fromJson(json['gateway_info']) 
+      gatewayInfo: json['gateway_info'] != null
+          ? GatewayStatus.fromJson(json['gateway_info'])
           : null,
     );
   }
@@ -538,22 +561,22 @@ class GatewayConnection {
       ip: json['ip'],
       port: json['port'],
       token: json['token'],
-      lastConnected: json['last_connected'] != null 
-          ? DateTime.tryParse(json['last_connected']) 
+      lastConnected: json['last_connected'] != null
+          ? DateTime.tryParse(json['last_connected'])
           : null,
       isOnline: json['is_online'] ?? false,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'url': url,
-    'ip': ip,
-    'port': port,
-    'token': token,
-    'last_connected': lastConnected?.toIso8601String(),
-    'is_online': isOnline,
-  };
+        'name': name,
+        'url': url,
+        'ip': ip,
+        'port': port,
+        'token': token,
+        'last_connected': lastConnected?.toIso8601String(),
+        'is_online': isOnline,
+      };
 
   GatewayConnection copyWith({
     String? name,

@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_status.dart';
 import 'gateway_service.dart';
 
+const Object _unsetConnectionField = Object();
+
 /// Connection status enumeration
 enum ConnectionStatus {
   connected,
@@ -36,23 +38,33 @@ class AppConnectionState {
 
   AppConnectionState copyWith({
     ConnectionStatus? status,
-    GatewayStatus? gatewayInfo,
-    String? errorMessage,
-    DateTime? lastPing,
+    Object? gatewayInfo = _unsetConnectionField,
+    Object? errorMessage = _unsetConnectionField,
+    Object? lastPing = _unsetConnectionField,
     int? latencyMs,
     int? retryCountdown,
-    String? gatewayUrl,
-    String? gatewayName,
+    Object? gatewayUrl = _unsetConnectionField,
+    Object? gatewayName = _unsetConnectionField,
   }) {
     return AppConnectionState(
       status: status ?? this.status,
-      gatewayInfo: gatewayInfo ?? this.gatewayInfo,
-      errorMessage: errorMessage ?? this.errorMessage,
-      lastPing: lastPing ?? this.lastPing,
+      gatewayInfo: identical(gatewayInfo, _unsetConnectionField)
+          ? this.gatewayInfo
+          : gatewayInfo as GatewayStatus?,
+      errorMessage: identical(errorMessage, _unsetConnectionField)
+          ? this.errorMessage
+          : errorMessage as String?,
+      lastPing: identical(lastPing, _unsetConnectionField)
+          ? this.lastPing
+          : lastPing as DateTime?,
       latencyMs: latencyMs ?? this.latencyMs,
       retryCountdown: retryCountdown ?? this.retryCountdown,
-      gatewayUrl: gatewayUrl ?? this.gatewayUrl,
-      gatewayName: gatewayName ?? this.gatewayName,
+      gatewayUrl: identical(gatewayUrl, _unsetConnectionField)
+          ? this.gatewayUrl
+          : gatewayUrl as String?,
+      gatewayName: identical(gatewayName, _unsetConnectionField)
+          ? this.gatewayName
+          : gatewayName as String?,
     );
   }
 
@@ -85,7 +97,7 @@ class ConnectionMonitorService extends ChangeNotifier {
   Timer? _pingTimer;
   Timer? _retryTimer;
   Timer? _countdownTimer;
-  
+
   AppConnectionState _state = const AppConnectionState();
   bool _isMonitoring = false;
   int _retryAttempts = 0;
@@ -93,7 +105,7 @@ class ConnectionMonitorService extends ChangeNotifier {
 
   /// Current connection state
   AppConnectionState get state => _state;
-  
+
   /// Whether monitoring is active
   bool get isMonitoring => _isMonitoring;
 
@@ -101,17 +113,17 @@ class ConnectionMonitorService extends ChangeNotifier {
   void startMonitoring(GatewayService gatewayService, {String? gatewayName}) {
     _gatewayService = gatewayService;
     _isMonitoring = true;
-    
+
     _state = _state.copyWith(
       gatewayUrl: gatewayService.baseUrl,
       gatewayName: gatewayName,
       status: ConnectionStatus.connecting,
     );
     notifyListeners();
-    
+
     // Initial ping
     _doPing();
-    
+
     // Start periodic ping
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(_pingInterval, (_) => _doPing());
@@ -126,7 +138,7 @@ class ConnectionMonitorService extends ChangeNotifier {
     _pingTimer = null;
     _retryTimer = null;
     _countdownTimer = null;
-    
+
     _state = _state.copyWith(
       status: ConnectionStatus.disconnected,
     );
@@ -136,13 +148,13 @@ class ConnectionMonitorService extends ChangeNotifier {
   /// Manual test connection
   Future<bool> testConnection() async {
     if (_gatewayService == null) return false;
-    
+
     final stopwatch = Stopwatch()..start();
-    
+
     try {
       final status = await _gatewayService!.getStatus();
       stopwatch.stop();
-      
+
       if (status != null && status.online) {
         _state = _state.copyWith(
           status: ConnectionStatus.connected,
@@ -180,13 +192,13 @@ class ConnectionMonitorService extends ChangeNotifier {
     _countdownTimer?.cancel();
     _retryAttempts = 0;
     _retryCountdown = 0;
-    
+
     _state = _state.copyWith(
       status: ConnectionStatus.connecting,
       errorMessage: null,
     );
     notifyListeners();
-    
+
     _doPing();
   }
 
@@ -240,20 +252,20 @@ class ConnectionMonitorService extends ChangeNotifier {
 
   void _doPing() async {
     if (_gatewayService == null || !_isMonitoring) return;
-    
+
     final stopwatch = Stopwatch()..start();
-    
+
     try {
       final status = await _gatewayService!.getStatus();
       stopwatch.stop();
-      
+
       if (status != null && status.online) {
         // Connection successful
         _retryAttempts = 0;
         _retryCountdown = 0;
         _retryTimer?.cancel();
         _countdownTimer?.cancel();
-        
+
         _state = _state.copyWith(
           status: ConnectionStatus.connected,
           gatewayInfo: status,
@@ -269,7 +281,7 @@ class ConnectionMonitorService extends ChangeNotifier {
       stopwatch.stop();
       _handleConnectionLost(e.toString());
     }
-    
+
     notifyListeners();
   }
 
@@ -280,7 +292,7 @@ class ConnectionMonitorService extends ChangeNotifier {
       lastPing: DateTime.now(),
     );
     notifyListeners();
-    
+
     // Start auto-retry if not already retrying
     if (_retryTimer == null || !_retryTimer!.isActive) {
       _startAutoRetry();
@@ -290,12 +302,12 @@ class ConnectionMonitorService extends ChangeNotifier {
   void _startAutoRetry() {
     _retryAttempts = 0;
     _retryCountdown = _retryInterval.inSeconds;
-    
+
     _startCountdown();
-    
+
     _retryTimer = Timer.periodic(_retryInterval, (timer) {
       _retryAttempts++;
-      
+
       if (_retryAttempts >= _maxRetryAttempts) {
         timer.cancel();
         _state = _state.copyWith(
@@ -306,10 +318,10 @@ class ConnectionMonitorService extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      
+
       _retryCountdown = _retryInterval.inSeconds;
       _startCountdown();
-      
+
       _doPing();
     });
   }
@@ -317,15 +329,15 @@ class ConnectionMonitorService extends ChangeNotifier {
   void _startCountdown() {
     _countdownTimer?.cancel();
     _retryCountdown = _retryInterval.inSeconds;
-    
+
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       _retryCountdown--;
-      
+
       _state = _state.copyWith(
         retryCountdown: _retryCountdown,
       );
       notifyListeners();
-      
+
       if (_retryCountdown <= 0) {
         timer.cancel();
       }

@@ -1,11 +1,6 @@
-/// Agent Visualization Widget
-///
-/// Provides a visually rich display of agent activity and status
-/// for the dashboard and agent monitor screens.
-/// Inspired by agent-monitor-openclaw-dashboard design.
-
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:flutter/material.dart';
+import '../models/agent_session.dart';
 import '../models/gateway_status.dart';
 import '../services/gateway_service.dart';
 import 'agent_card_widget.dart';
@@ -33,6 +28,7 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
   List<dynamic> _agents = [];
   Map<String, dynamic>? _stats;
   Timer? _refreshTimer;
+  String _filter = 'all';
 
   @override
   void initState() {
@@ -42,11 +38,11 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
   }
 
   @override
-  void didUpdateWidget(AgentVisualizationWidget oldWidget) {
+  void didUpdateWidget(covariant AgentVisualizationWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Refresh if gateway status changed
+
     if (widget.gatewayStatus != oldWidget.gatewayStatus) {
-      _updateFromGatewayStatus();
+      _syncFromGatewayStatus();
     }
 
     final gatewayChanged =
@@ -55,14 +51,6 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
 
     if (gatewayChanged) {
       unawaited(_refreshAgents());
-    }
-  }
-
-  void _updateFromGatewayStatus() {
-    if (widget.gatewayStatus != null && widget.gatewayStatus!.agents != null) {
-      setState(() {
-        _agents = widget.gatewayStatus!.agents!;
-      });
     }
   }
 
@@ -78,132 +66,154 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
         Timer.periodic(const Duration(seconds: 5), (_) => _refreshAgents());
   }
 
+  void _syncFromGatewayStatus() {
+    if (widget.gatewayStatus?.agents != null &&
+        widget.gatewayStatus!.agents!.isNotEmpty) {
+      setState(() {
+        _agents = widget.gatewayStatus!.agents!;
+      });
+    }
+  }
+
   Future<void> _refreshAgents() async {
-    if (widget.gatewayService == null) return;
+    if (widget.gatewayService == null) {
+      _syncFromGatewayStatus();
+      return;
+    }
 
     try {
       final agentsResult = await widget.gatewayService!.getAgents();
       final stats = await widget.gatewayService!.getAgentStats();
 
-      if (mounted) {
-        setState(() {
-          _agents = agentsResult ?? [];
-          _stats = stats;
-        });
-      }
-    } catch (e) {
-      // Silently fail - we'll use gateway status data if available
-      if (mounted) {
-        setState(() {
-          // Keep existing data or use empty list
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _agents = agentsResult?.isNotEmpty == true
+            ? agentsResult!
+            : (widget.gatewayStatus?.agents ?? []);
+        _stats = stats;
+      });
+    } catch (_) {
+      _syncFromGatewayStatus();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Use gateway status data if we don't have live agent data
     final displayAgents =
         _agents.isNotEmpty ? _agents : (widget.gatewayStatus?.agents ?? []);
-    final displayStats = _stats ?? {};
+    final filteredAgents = _applyFilter(displayAgents);
 
-    if (widget.compact) {
-      return _buildCompactView(displayAgents, displayStats);
-    }
-
-    return _buildFullView(displayAgents, displayStats);
+    return widget.compact
+        ? _buildCompactView(context, displayAgents)
+        : _buildFullView(context, displayAgents, filteredAgents);
   }
 
-  Widget _buildCompactView(List<dynamic> agents, Map<String, dynamic> stats) {
+  Widget _buildCompactView(BuildContext context, List<dynamic> agents) {
     final totalAgents = agents.length;
-    final activeAgents = agents.where((a) {
-      final isActive = a.isActive ?? false;
-      final status = a.status ?? 'unknown';
-      return isActive || status == 'active';
+    final activeAgents = agents.where(_isAgentActive).length;
+    final subagents = agents.where(_isSubagent).length;
+    final toolsInFlight = agents.where((agent) {
+      final tool = _toolName(agent);
+      return tool != null && tool.isNotEmpty;
     }).length;
+    final activeNames = agents
+        .where(_isAgentActive)
+        .take(3)
+        .map(_agentName)
+        .where((name) => name.isNotEmpty)
+        .join(' • ');
 
     return Card(
       child: InkWell(
         onTap: widget.onTap,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Agent icon with count badge
-              Stack(
+              Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primaryContainer
+                          .withValues(alpha: 0.85),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
-                      Icons.people,
+                      Icons.bubble_chart_outlined,
                       color: Theme.of(context).colorScheme.primary,
-                      size: 28,
+                      size: 24,
                     ),
                   ),
-                  if (totalAgents > 0)
-                    Positioned(
-                      right: -4,
-                      top: -4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: activeAgents > 0 ? Colors.green : Colors.grey,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '$totalAgents',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 16),
-              // Stats
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Agents',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildCompactStat(
-                          'Active',
-                          '$activeAgents',
-                          activeAgents > 0 ? Colors.green : Colors.grey,
+                        Text(
+                          'Agent Work Map',
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                         ),
-                        const SizedBox(width: 12),
-                        if (stats['totalTokens'] != null)
-                          _buildCompactStat(
-                            'Tokens',
-                            _formatTokens(stats['totalTokens']),
-                            Colors.blue,
-                          ),
+                        Text(
+                          activeNames.isNotEmpty
+                              ? activeNames
+                              : 'No active sessions yet',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  Icon(Icons.chevron_right, color: Colors.grey[600]),
+                ],
               ),
-              Icon(
-                Icons.chevron_right,
-                color: Colors.grey[600],
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildCompactStat(
+                      context,
+                      'Sessions',
+                      '$totalAgents',
+                      Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildCompactStat(
+                      context,
+                      'Busy',
+                      '$activeAgents',
+                      activeAgents > 0 ? Colors.green : Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildCompactStat(
+                      context,
+                      'Subagents',
+                      '$subagents',
+                      subagents > 0 ? Colors.orange : Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _buildCompactStat(
+                      context,
+                      'Tools',
+                      '$toolsInFlight',
+                      toolsInFlight > 0 ? Colors.deepPurple : Colors.grey,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -212,31 +222,56 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     );
   }
 
-  Widget _buildCompactStat(String label, String value, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
+  Widget _buildCompactStat(
+    BuildContext context,
+    String label,
+    String value,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
           ),
-        ),
-        const SizedBox(width: 4),
-        Text(
-          '$label: $value',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: color,
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-      ],
+          const SizedBox(height: 2),
+          Text(label, style: Theme.of(context).textTheme.labelSmall),
+        ],
+      ),
     );
   }
 
-  Widget _buildFullView(List<dynamic> agents, Map<String, dynamic> stats) {
+  Widget _buildFullView(
+    BuildContext context,
+    List<dynamic> agents,
+    List<dynamic> filteredAgents,
+  ) {
+    final activeAgents = agents.where(_isAgentActive).length;
+    final subagents = agents.where(_isSubagent).length;
+    final toolsInFlight = agents.where((agent) {
+      final tool = _toolName(agent);
+      return tool != null && tool.isNotEmpty;
+    }).length;
+    final totalTokens = _stats?['totalTokens'] as int? ?? _sumTokens(agents);
+    final workLanes = agents
+        .where((agent) => _isAgentActive(agent) || _toolName(agent) != null)
+        .toList()
+      ..sort((a, b) {
+        final aActive = _isAgentActive(a) ? 1 : 0;
+        final bActive = _isAgentActive(b) ? 1 : 0;
+        return bActive.compareTo(aActive);
+      });
+
     return Card(
       child: InkWell(
         onTap: widget.onTap,
@@ -246,7 +281,6 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header
               Row(
                 children: [
                   Container(
@@ -256,7 +290,7 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
-                      Icons.people,
+                      Icons.account_tree_outlined,
                       color: Theme.of(context).colorScheme.primary,
                       size: 28,
                     ),
@@ -267,56 +301,89 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Agent Activity',
+                          'Agent Visualization',
                           style:
                               Theme.of(context).textTheme.titleLarge?.copyWith(
                                     fontWeight: FontWeight.bold,
                                   ),
                         ),
                         Text(
-                          '${agents.length} agents • ${_formatStats(stats)}',
+                          '${agents.length} sessions • $activeAgents active • $toolsInFlight tools in flight',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
                   ),
-                  Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey[600],
-                  ),
+                  Icon(Icons.chevron_right, color: Colors.grey[600]),
                 ],
               ),
               const SizedBox(height: 16),
-
-              // Agent list
-              if (agents.isEmpty)
-                _buildEmptyState()
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _buildSummaryChip(
+                    context,
+                    'Sessions ${agents.length}',
+                    Colors.blue,
+                  ),
+                  _buildSummaryChip(
+                    context,
+                    'Active $activeAgents',
+                    activeAgents > 0 ? Colors.green : Colors.grey,
+                  ),
+                  _buildSummaryChip(
+                    context,
+                    'Subagents $subagents',
+                    subagents > 0 ? Colors.orange : Colors.grey,
+                  ),
+                  _buildSummaryChip(
+                    context,
+                    'Tokens ${_formatTokens(totalTokens)}',
+                    totalTokens > 0 ? Colors.deepOrange : Colors.grey,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _buildFilterChips(),
+              const SizedBox(height: 14),
+              if (workLanes.isNotEmpty) ...[
+                Text(
+                  'Live lanes',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 10),
+                ...workLanes.take(4).map(
+                      (agent) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _buildLaneRow(context, agent),
+                      ),
+                    ),
+                const SizedBox(height: 8),
+              ],
+              if (filteredAgents.isEmpty)
+                _buildEmptyState(context)
               else
-                ...agents.take(3).map((agent) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildAgentRow(agent),
-                    )),
-
-              // Show more indicator
-              if (agents.length > 3)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '+${agents.length - 3} more agents',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
+                ...filteredAgents.take(3).map(
+                      (agent) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: AgentCardWidget(
+                          agent: agent,
+                          compact: true,
+                          onTap: widget.onTap,
+                        ),
                       ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.arrow_downward,
-                        size: 14,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ],
+                    ),
+              if (filteredAgents.length > 3)
+                Align(
+                  alignment: Alignment.center,
+                  child: Text(
+                    '+${filteredAgents.length - 3} more sessions',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
                   ),
                 ),
             ],
@@ -326,37 +393,126 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     );
   }
 
-  String _formatStats(Map<String, dynamic> stats) {
-    final tokens = stats['totalTokens'] ?? 0;
-    if (tokens > 0) {
-      return '${_formatTokens(tokens)} tokens';
-    }
-    return 'Monitoring...';
+  Widget _buildSummaryChip(BuildContext context, String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
   }
 
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000000) {
-      return '${(tokens / 1000000).toStringAsFixed(1)}M';
-    } else if (tokens >= 1000) {
-      return '${(tokens / 1000).toStringAsFixed(0)}K';
-    }
-    return tokens.toString();
+  Widget _buildFilterChips() {
+    const filters = [
+      {'value': 'all', 'label': 'All'},
+      {'value': 'active', 'label': 'Active'},
+      {'value': 'main', 'label': 'Primary'},
+      {'value': 'subagent', 'label': 'Subagents'},
+    ];
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: filters.map((filter) {
+          final selected = _filter == filter['value'];
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(filter['label']!),
+              selected: selected,
+              onSelected: (_) {
+                setState(() {
+                  _filter = filter['value']!;
+                });
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildLaneRow(BuildContext context, dynamic agent) {
+    final color = _isAgentActive(agent) ? Colors.green : Colors.blueGrey;
+    final tool = _toolName(agent);
+    final phase = _toolPhase(agent);
+    final statusText = tool != null && tool.isNotEmpty
+        ? phase != null && phase.isNotEmpty
+            ? '$tool · $phase'
+            : tool
+        : _statusSummary(agent);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _agentName(agent),
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                Text(
+                  statusText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (_isSubagent(agent))
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: Icon(Icons.call_split, size: 16, color: Colors.orange),
+            ),
+          Text(
+            _formatTokens(_tokenCount(agent)),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.people_outline,
-            color: Colors.grey[600],
-            size: 32,
-          ),
+          Icon(Icons.people_outline, color: Colors.grey[600], size: 32),
           const SizedBox(width: 8),
           Text(
-            'No active agents',
+            'No sessions in this filter',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.grey[600],
                 ),
@@ -366,12 +522,69 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     );
   }
 
-  Widget _buildAgentRow(dynamic agent) {
-    // Use the new AgentCardWidget for better visualization
-    return AgentCardWidget(
-      agent: agent,
-      compact: true,
-      onTap: widget.onTap,
-    );
+  List<dynamic> _applyFilter(List<dynamic> agents) {
+    switch (_filter) {
+      case 'active':
+        return agents.where(_isAgentActive).toList();
+      case 'main':
+        return agents.where((agent) => !_isSubagent(agent)).toList();
+      case 'subagent':
+        return agents.where(_isSubagent).toList();
+      default:
+        return agents;
+    }
+  }
+
+  bool _isAgentActive(dynamic agent) {
+    if (agent is AgentSession) return agent.isActive;
+    if (agent is AgentInfo) return agent.isActive || agent.status == 'active';
+    return false;
+  }
+
+  bool _isSubagent(dynamic agent) {
+    if (agent is AgentSession) return agent.isSubagent;
+    return false;
+  }
+
+  String _agentName(dynamic agent) {
+    if (agent is AgentSession) return agent.name;
+    if (agent is AgentInfo) return agent.name;
+    return 'Unknown';
+  }
+
+  String? _toolName(dynamic agent) {
+    if (agent is AgentSession) return agent.currentToolName;
+    return agent is AgentInfo ? agent.currentTask : null;
+  }
+
+  String? _toolPhase(dynamic agent) {
+    if (agent is AgentSession) return agent.currentToolPhase;
+    return null;
+  }
+
+  String _statusSummary(dynamic agent) {
+    if (agent is AgentSession) return agent.statusDisplay;
+    if (agent is AgentInfo) return agent.status;
+    return 'Idle';
+  }
+
+  int _tokenCount(dynamic agent) {
+    if (agent is AgentSession) return agent.totalTokens;
+    if (agent is AgentInfo) return agent.totalTokens ?? 0;
+    return 0;
+  }
+
+  int _sumTokens(List<dynamic> agents) {
+    return agents.fold<int>(0, (sum, agent) => sum + _tokenCount(agent));
+  }
+
+  String _formatTokens(int tokens) {
+    if (tokens >= 1000000) {
+      return '${(tokens / 1000000).toStringAsFixed(1)}M';
+    }
+    if (tokens >= 1000) {
+      return '${(tokens / 1000).toStringAsFixed(1)}K';
+    }
+    return tokens.toString();
   }
 }

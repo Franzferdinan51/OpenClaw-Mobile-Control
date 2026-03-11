@@ -1,21 +1,6 @@
-/// Chat Service
-///
-/// Manages chat state and communication with OpenClaw Gateway.
-/// Uses WebSocket for real-time messaging and REST API for history.
-///
-/// Features:
-/// - Real-time chat with OpenClaw agents
-/// - Inline chart widget support for data visualization
-/// - Inline weather widget support
-/// - Intent detection for automatic chart/weather generation
-/// - Bar, line, pie, and gauge chart types
-///
-/// Usage:
-/// 1. Initialize with gateway URL
-/// 2. Connect to WebSocket
-/// 3. Send messages via sendMessage()
-/// 4. Listen to messages via messages stream
-/// 5. Chart and weather intents are auto-detected and rendered inline
+// Chat service.
+// Manages chat state and communication with OpenClaw Gateway.
+// Uses HTTP-first messaging/history and inline UI widgets.
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -50,6 +35,12 @@ class ChatMessageUI {
   /// Weather widget data for inline display
   final WeatherWidgetData? weatherWidget;
 
+  /// Info card widget for inline display
+  final InfoCardWidgetData? infoCardWidget;
+
+  /// Status widget for inline display
+  final StatusWidgetData? statusWidget;
+
   /// Whether to show forecast in weather widget
   final bool showWeatherForecast;
 
@@ -69,6 +60,8 @@ class ChatMessageUI {
     this.agentEmoji,
     this.chartWidget,
     this.weatherWidget,
+    this.infoCardWidget,
+    this.statusWidget,
     this.showWeatherForecast = false,
     this.isNight = false,
     this.chartOnly = false,
@@ -84,6 +77,8 @@ class ChatMessageUI {
     String? agentEmoji,
     InlineChartData? chartWidget,
     WeatherWidgetData? weatherWidget,
+    InfoCardWidgetData? infoCardWidget,
+    StatusWidgetData? statusWidget,
     bool? showWeatherForecast,
     bool? isNight,
     bool? chartOnly,
@@ -98,6 +93,8 @@ class ChatMessageUI {
       agentEmoji: agentEmoji ?? this.agentEmoji,
       chartWidget: chartWidget ?? this.chartWidget,
       weatherWidget: weatherWidget ?? this.weatherWidget,
+      infoCardWidget: infoCardWidget ?? this.infoCardWidget,
+      statusWidget: statusWidget ?? this.statusWidget,
       showWeatherForecast: showWeatherForecast ?? this.showWeatherForecast,
       chartOnly: chartOnly ?? this.chartOnly,
       isNight: isNight ?? this.isNight,
@@ -110,8 +107,18 @@ class ChatMessageUI {
   /// Check if this message has weather widget data
   bool get hasWeatherWidget => weatherWidget != null;
 
+  /// Check if this message has info card widget data
+  bool get hasInfoCardWidget => infoCardWidget != null;
+
+  /// Check if this message has status widget data
+  bool get hasStatusWidget => statusWidget != null;
+
   /// Check if this message has any inline widget
-  bool get hasInlineWidget => hasChartWidget || hasWeatherWidget;
+  bool get hasInlineWidget =>
+      hasChartWidget ||
+      hasWeatherWidget ||
+      hasInfoCardWidget ||
+      hasStatusWidget;
 }
 
 enum ChatMessageStatus {
@@ -276,6 +283,7 @@ class ChatService {
       _updateMessageStatus(userMessage.id, ChatMessageStatus.sent);
       _setTyping(true);
       _checkForChartIntent(content.trim());
+      _checkForLiveUiIntent(content.trim());
       unawaited(_fetchLatestAssistantMessages());
       return true;
     } catch (e) {
@@ -287,8 +295,9 @@ class ChatService {
   }
 
   Future<String?> _resolvePrimarySessionKey() async {
-    if (_activeSessionId != null && _activeSessionId!.isNotEmpty)
+    if (_activeSessionId != null && _activeSessionId!.isNotEmpty) {
       return _activeSessionId;
+    }
 
     final agents = await _gatewayService.getAgents();
     if (agents != null && agents.isNotEmpty) {
@@ -554,65 +563,166 @@ class ChatService {
     addChartMessage(chartData);
   }
 
+  void _checkForLiveUiIntent(String message) {
+    final normalized = message.toLowerCase();
+
+    if (_matchesAny(normalized, const [
+      'show agents',
+      'agent status',
+      'team status',
+      'team activity',
+      'session status',
+      'what are the agents doing',
+    ])) {
+      unawaited(_addAgentStatusWidget());
+      return;
+    }
+
+    if (_matchesAny(normalized, const [
+      'runtime status',
+      'gateway status',
+      'connection status',
+      'local runtime',
+      'local gateway',
+    ])) {
+      unawaited(_addRuntimeStatusWidget());
+      return;
+    }
+
+    if (_matchesAny(normalized, const [
+      'autowork',
+      'automation status',
+      'run automation',
+      'show automation',
+    ])) {
+      unawaited(_addAutoworkWidget());
+    }
+  }
+
+  bool _matchesAny(String message, List<String> phrases) {
+    return phrases.any(message.contains);
+  }
+
+  Future<void> _addAgentStatusWidget() async {
+    try {
+      final agents = await _gatewayService.getAgents() ?? [];
+      final activeAgents = agents.where((agent) => agent.isActive).length;
+      final subagents = agents.where((agent) => agent.isSubagent).length;
+      final toolsInFlight = agents
+          .where((agent) =>
+              agent.currentToolName != null &&
+              agent.currentToolName!.isNotEmpty)
+          .length;
+
+      final highlights = agents
+          .where((agent) => agent.isActive)
+          .take(3)
+          .map((agent) =>
+              agent.currentToolName != null && agent.currentToolName!.isNotEmpty
+                  ? '${agent.name}: ${agent.currentToolName}'
+                  : '${agent.name}: ${agent.statusDisplay}')
+          .toList();
+
+      _addMessage(ChatMessageUI(
+        id: 'agent_status_${DateTime.now().millisecondsSinceEpoch}',
+        content: 'Live team snapshot',
+        isUser: false,
+        timestamp: DateTime.now(),
+        status: ChatMessageStatus.delivered,
+        statusWidget: StatusWidgetData(
+          status: activeAgents > 0 ? 'active' : 'idle',
+          message: highlights.isNotEmpty
+              ? highlights.join(' • ')
+              : 'No active sessions are reporting work right now.',
+          color: activeAgents > 0 ? 'green' : 'orange',
+          items: [
+            StatusItem(label: 'Sessions', value: '${agents.length}'),
+            StatusItem(label: 'Active', value: '$activeAgents'),
+            StatusItem(label: 'Subagents', value: '$subagents'),
+            StatusItem(label: 'Tools', value: '$toolsInFlight'),
+          ],
+        ),
+        agentName: 'DuckBot',
+        agentEmoji: '🦆',
+      ));
+    } catch (e) {
+      debugPrint('Failed to build agent status widget: $e');
+    }
+  }
+
+  Future<void> _addRuntimeStatusWidget() async {
+    try {
+      final status = await _gatewayService.getStatus();
+      final agents = status?.agents?.length ?? 0;
+      final nodes = status?.nodes?.length ?? 0;
+
+      _addMessage(ChatMessageUI(
+        id: 'runtime_status_${DateTime.now().millisecondsSinceEpoch}',
+        content: 'Runtime status',
+        isUser: false,
+        timestamp: DateTime.now(),
+        status: ChatMessageStatus.delivered,
+        statusWidget: StatusWidgetData(
+          status: status?.online == true ? 'connected' : 'offline',
+          message: status?.online == true
+              ? 'Gateway is reachable for chat, tools, and session updates.'
+              : 'Gateway did not respond to the latest probe.',
+          color: status?.online == true ? 'green' : 'red',
+          items: [
+            StatusItem(
+                label: 'Gateway',
+                value: status?.online == true ? 'Online' : 'Offline'),
+            StatusItem(label: 'Sessions', value: '$agents'),
+            StatusItem(label: 'Nodes', value: '$nodes'),
+            StatusItem(
+                label: 'Mode',
+                value: status?.isPaused == true ? 'Paused' : 'Live'),
+          ],
+        ),
+        agentName: 'DuckBot',
+        agentEmoji: '🦆',
+      ));
+    } catch (e) {
+      debugPrint('Failed to build runtime status widget: $e');
+    }
+  }
+
+  Future<void> _addAutoworkWidget() async {
+    try {
+      final config = await _gatewayService.getAutoworkConfig();
+      final enabledTargets =
+          config?.targets.where((target) => target.canSend).length ?? 0;
+
+      _addMessage(ChatMessageUI(
+        id: 'autowork_${DateTime.now().millisecondsSinceEpoch}',
+        content: 'Automation snapshot',
+        isUser: false,
+        timestamp: DateTime.now(),
+        status: ChatMessageStatus.delivered,
+        infoCardWidget: InfoCardWidgetData(
+          title:
+              config?.isEnabled == true ? 'Autowork enabled' : 'Autowork idle',
+          description: config == null
+              ? 'Autowork configuration is not available from this gateway.'
+              : config.isEnabled
+                  ? '$enabledTargets sessions are ready for scheduled sends.'
+                  : 'Open the Autowork screen to enable session automation.',
+          icon: config?.isEnabled == true ? '⚙️' : '🛠️',
+          metadata: {
+            'defaultDirective': config?.defaultDirective ?? '',
+            'maxSendsPerTick': config?.maxSendsPerTick ?? 0,
+            'enabledTargets': enabledTargets,
+          },
+        ),
+        agentName: 'DuckBot',
+        agentEmoji: '🦆',
+      ));
+    } catch (e) {
+      debugPrint('Failed to build autowork widget: $e');
+    }
+  }
+
   // ==================== Internal ====================
-
-  void _handleIncomingMessage(GatewayMessage message) {
-    debugPrint('📨 Handling message: ${message.type}');
-
-    // Stop typing indicator
-    _setTyping(false);
-
-    if (message.isChatResponse) {
-      // Handle chat response
-      final content = message.content;
-      if (content != null && content.isNotEmpty) {
-        // Check if response contains chart data
-        final chartData = _extractChartFromResponse(message.data);
-
-        final agentMessage = ChatMessageUI(
-          id: message.id ?? 'agent_${DateTime.now().millisecondsSinceEpoch}',
-          content: content,
-          isUser: false,
-          timestamp: message.timestamp,
-          status: ChatMessageStatus.delivered,
-          agentName: message.data['agentName'] as String?,
-          agentEmoji: message.data['agentEmoji'] as String?,
-          chartWidget: chartData,
-        );
-        _addMessage(agentMessage);
-      }
-    } else if (message.isError) {
-      // Handle error
-      _addErrorMessage(message.errorMessage ?? 'An error occurred');
-    } else {
-      // Handle other message types (status, system, etc.)
-      final content = message.content;
-      if (content != null && content.isNotEmpty) {
-        _addMessage(ChatMessageUI(
-          id: message.id ?? 'system_${DateTime.now().millisecondsSinceEpoch}',
-          content: content,
-          isUser: false,
-          timestamp: message.timestamp,
-          status: ChatMessageStatus.delivered,
-        ));
-      }
-    }
-  }
-
-  /// Extract chart data from agent response if present
-  InlineChartData? _extractChartFromResponse(Map<String, dynamic> data) {
-    if (data.containsKey('chart')) {
-      try {
-        final chartJson = data['chart'];
-        if (chartJson is Map<String, dynamic>) {
-          return InlineChartData.fromJson(chartJson);
-        }
-      } catch (e) {
-        debugPrint('Error parsing chart from response: $e');
-      }
-    }
-    return null;
-  }
 
   void _addMessage(ChatMessageUI message) {
     _messages.add(message);

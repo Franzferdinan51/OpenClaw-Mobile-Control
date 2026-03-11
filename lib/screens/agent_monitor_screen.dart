@@ -5,11 +5,15 @@ import '../services/gateway_service.dart';
 import '../models/agent_session.dart';
 import '../models/gateway_status.dart';
 import '../widgets/agent_visualization_widget.dart';
+import '../widgets/agent_card_widget.dart';
 import '../widgets/activity_feed_mobile.dart';
 import '../widgets/gateway_status_card.dart';
 import '../widgets/connection_status_icon.dart';
 import 'agent_detail_screen.dart';
+import 'agent_library_screen.dart';
+import 'autowork_screen.dart';
 import 'boss_chat_screen.dart';
+import 'office_preview_screen.dart';
 
 class AgentMonitorScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -30,6 +34,7 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   String? _error;
   Timer? _refreshTimer;
   DateTime? _lastRefresh;
+  String _activeFilter = 'all';
 
   @override
   void initState() {
@@ -156,12 +161,15 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   }
 
   Widget _buildContent() {
+    final filteredAgents = _getFilteredAgents();
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         // Gateway Status
         GatewayStatusCard(
           status: _gatewayStatus,
+          liveStats: _stats,
           lastRefresh: _lastRefresh,
           onRefresh: _refreshAgents,
         ),
@@ -171,11 +179,14 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
         _buildStatsCard(),
         const SizedBox(height: 16),
 
+        _buildOpsRow(),
+        const SizedBox(height: 16),
+
         // Agent Visualization Widget (compact mode for list integration)
         AgentVisualizationWidget(
           gatewayService: _service,
           gatewayStatus: _gatewayStatus,
-          compact: true,
+          compact: false,
         ),
         const SizedBox(height: 16),
 
@@ -193,12 +204,14 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
         // Agents Header
         _buildAgentsHeader(),
         const SizedBox(height: 8),
+        _buildFilterChips(),
+        const SizedBox(height: 8),
 
         // Agent List
-        if (_agents.isEmpty)
+        if (filteredAgents.isEmpty)
           _buildEmptyState()
         else
-          ..._agents.map((agent) => _buildAgentCard(agent)),
+          ...filteredAgents.map((agent) => _buildAgentCard(agent)),
       ],
     );
   }
@@ -208,6 +221,11 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
     final total = stats['totalAgents'] ?? 0;
     final active = stats['activeAgents'] ?? 0;
     final tokens = stats['totalTokens'] ?? 0;
+    final subagents = _agents.where((agent) => agent.isSubagent).length;
+    final toolsInFlight = _agents
+        .where((agent) =>
+            agent.currentToolName != null && agent.currentToolName!.isNotEmpty)
+        .length;
 
     return Card(
       child: Padding(
@@ -224,18 +242,84 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+            Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              alignment: WrapAlignment.spaceAround,
               children: [
-                _buildStatItem('Total Agents', total.toString(), Icons.people),
+                _buildStatItem('Total', total.toString(), Icons.people),
                 _buildStatItem('Active', active.toString(), Icons.play_circle,
                     color: Colors.green),
+                _buildStatItem(
+                    'Subagents', subagents.toString(), Icons.call_split,
+                    color: Colors.orange),
+                _buildStatItem(
+                    'Tools', toolsInFlight.toString(), Icons.build_circle,
+                    color: Colors.deepPurple),
                 _buildStatItem('Tokens', _formatTokens(tokens), Icons.token),
               ],
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildOpsRow() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => BossChatScreen(gatewayService: _service),
+              ),
+            );
+          },
+          icon: const Icon(Icons.campaign_outlined),
+          label: const Text('Boss Chat'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => AutoworkScreen(gatewayService: _service),
+              ),
+            );
+          },
+          icon: const Icon(Icons.auto_awesome_motion),
+          label: const Text('Autowork'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    OfficePreviewScreen(gatewayService: _service),
+              ),
+            );
+          },
+          icon: const Icon(Icons.apartment),
+          label: const Text('Office'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const AgentLibraryScreen(),
+              ),
+            );
+          },
+          icon: const Icon(Icons.psychology_alt),
+          label: const Text('Agent Setup'),
+        ),
+      ],
     );
   }
 
@@ -260,10 +344,52 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text('Agents', style: Theme.of(context).textTheme.titleLarge),
-        Text('${_agents.length} total',
+        Text('${_getFilteredAgents().length} shown • ${_agents.length} total',
             style: Theme.of(context).textTheme.bodySmall),
       ],
     );
+  }
+
+  Widget _buildFilterChips() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildFilterChip('All', 'all'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Active', 'active'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Primary', 'primary'),
+          const SizedBox(width: 8),
+          _buildFilterChip('Subagents', 'subagent'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, String value) {
+    return FilterChip(
+      label: Text(label),
+      selected: _activeFilter == value,
+      onSelected: (_) {
+        setState(() {
+          _activeFilter = value;
+        });
+      },
+    );
+  }
+
+  List<AgentSession> _getFilteredAgents() {
+    switch (_activeFilter) {
+      case 'active':
+        return _agents.where((agent) => agent.isActive).toList();
+      case 'primary':
+        return _agents.where((agent) => !agent.isSubagent).toList();
+      case 'subagent':
+        return _agents.where((agent) => agent.isSubagent).toList();
+      default:
+        return _agents;
+    }
   }
 
   List<ActivityEvent> _buildActivityEvents(
@@ -412,168 +538,13 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   }
 
   Widget _buildAgentCard(AgentSession agent) {
-    final isActive = agent.isActive;
-    final statusColor = _getStatusColor(agent.statusColor);
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: AgentCardWidget(
+        agent: agent,
         onTap: () => _showAgentDetails(agent),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  // Agent avatar/emoji
-                  CircleAvatar(
-                    backgroundColor: statusColor.withOpacity(0.2),
-                    child: Text(agent.emoji ?? '🤖',
-                        style: const TextStyle(fontSize: 20)),
-                  ),
-                  const SizedBox(width: 12),
-                  // Agent name and status
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                agent.name,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                              ),
-                            ),
-                            if (agent.isSubagent)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.purple.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text('Sub',
-                                    style: TextStyle(fontSize: 10)),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(
-                              isActive ? Icons.play_circle : Icons.pause_circle,
-                              size: 14,
-                              color: statusColor,
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                agent.statusDisplay,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(
-                                      color: statusColor,
-                                    ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Arrow
-                  const Icon(Icons.chevron_right, color: Colors.grey),
-                ],
-              ),
-              // Token usage
-              if (agent.usageKnown) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    _buildTokenBadge('In', agent.inputTokens, Colors.blue),
-                    const SizedBox(width: 8),
-                    _buildTokenBadge('Out', agent.outputTokens, Colors.orange),
-                    const SizedBox(width: 8),
-                    _buildTokenBadge('Total', agent.totalTokens, Colors.green),
-                  ],
-                ),
-              ],
-              // Current tool
-              if (agent.currentToolName != null &&
-                  agent.currentToolName!.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[800],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.build, size: 12, color: Colors.white70),
-                      const SizedBox(width: 4),
-                      Text(
-                        agent.currentToolName!,
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
-  }
-
-  Widget _buildTokenBadge(String label, int tokens, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(fontSize: 9, color: color)),
-          Text(
-            _formatTokens(tokens),
-            style: TextStyle(
-                fontSize: 11, fontWeight: FontWeight.bold, color: color),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Color _getStatusColor(String statusColor) {
-    switch (statusColor) {
-      case 'green':
-        return Colors.green;
-      case 'red':
-        return Colors.red;
-      case 'yellow':
-        return Colors.yellow;
-      default:
-        return Colors.grey;
-    }
   }
 
   String _formatTokens(int tokens) {

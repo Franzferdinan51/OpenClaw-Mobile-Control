@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/autowork_config.dart';
+import '../models/gateway_status.dart';
 import '../services/backup_service.dart';
 import '../services/gateway_service.dart';
 import '../services/local_metrics_service.dart';
+import 'agent_library_screen.dart';
 import 'agent_monitor_screen.dart';
+import 'autowork_screen.dart';
 import 'backup_restore_screen.dart';
 import 'boss_chat_screen.dart';
 import 'chat_screen.dart';
 import 'connect_gateway_screen.dart';
 import 'local_installer_screen.dart';
 import 'logs_screen.dart';
+import 'node_settings_screen.dart';
 import 'office_preview_screen.dart';
 import 'termux_screen.dart';
 
@@ -38,6 +43,10 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
   LocalMetrics? _lastMetrics;
   LocalRuntimeStatus? _runtimeStatus;
   Map<String, dynamic>? _connectionCheck;
+  GatewayStatus? _gatewayStatus;
+  Map<String, dynamic>? _agentStats;
+  AutoworkConfig? _autoworkConfig;
+  DateTime? _overviewRefreshedAt;
 
   @override
   void initState() {
@@ -103,14 +112,39 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
           _connectionCheck = null;
           _lastMetrics = null;
           _runtimeStatus = null;
+          _gatewayStatus = null;
+          _agentStats = null;
+          _autoworkConfig = null;
+          _overviewRefreshedAt = null;
         });
       }
       return;
     }
 
     final connectionCheck = await _service!.checkConnection();
+    GatewayStatus? gatewayStatus;
+    Map<String, dynamic>? agentStats;
+    AutoworkConfig? autoworkConfig;
     LocalMetrics? metrics;
     LocalRuntimeStatus? runtimeStatus;
+
+    try {
+      gatewayStatus = await _service!.getStatus();
+    } catch (_) {
+      gatewayStatus = null;
+    }
+
+    try {
+      agentStats = await _service!.getAgentStats();
+    } catch (_) {
+      agentStats = null;
+    }
+
+    try {
+      autoworkConfig = await _service!.getAutoworkConfig();
+    } catch (_) {
+      autoworkConfig = null;
+    }
 
     if (_isLocalGateway(_service!.baseUrl)) {
       try {
@@ -131,6 +165,10 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
       _connectionCheck = connectionCheck;
       _lastMetrics = metrics;
       _runtimeStatus = runtimeStatus;
+      _gatewayStatus = gatewayStatus;
+      _agentStats = agentStats;
+      _autoworkConfig = autoworkConfig;
+      _overviewRefreshedAt = DateTime.now();
     });
   }
 
@@ -223,6 +261,37 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
                   OfficePreviewScreen(gatewayService: _service),
             ),
           );
+          break;
+        case 'agent_setup':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const AgentLibraryScreen(),
+            ),
+          );
+          break;
+        case 'node_setup':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const NodeSettingsScreen(),
+            ),
+          );
+          break;
+        case 'autowork':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AutoworkScreen(gatewayService: _service),
+            ),
+          );
+          await _refreshOverview();
+          break;
+        case 'run_autowork':
+          await _runAutoworkNow();
           break;
         case 'test_metrics':
           await _testMetrics();
@@ -397,6 +466,22 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
     );
   }
 
+  Future<void> _runAutoworkNow() async {
+    if (_service == null) {
+      _showResult('No gateway configured', isError: true);
+      return;
+    }
+
+    final result = await _service!.runAutowork();
+    await _refreshOverview();
+    _showResult(
+      result?['ok'] == true || result?['success'] == true
+          ? 'Autowork run requested'
+          : 'Autowork request failed',
+      isError: result?['ok'] != true && result?['success'] != true,
+    );
+  }
+
   void _showRuntimeStatusSheet() {
     final runtime = _runtimeStatus;
     if (runtime == null) {
@@ -537,8 +622,8 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
               _ActionItem('Test Chat', Icons.mark_chat_read, 'test_chat'),
               _ActionItem('Boss Chat', Icons.campaign, 'boss_chat'),
               _ActionItem('Monitor', Icons.monitor_heart, 'agent_monitor'),
-              if (widget.showAdvanced)
-                _ActionItem('Office View', Icons.apartment, 'office_view'),
+              _ActionItem('Office View', Icons.apartment, 'office_view'),
+              _ActionItem('Agent Setup', Icons.psychology_alt, 'agent_setup'),
             ],
           ),
           const SizedBox(height: 16),
@@ -550,6 +635,16 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
               _ActionItem('Status', Icons.health_and_safety, 'runtime_status'),
               _ActionItem('Repair', Icons.build_circle_outlined, 'installer'),
               _ActionItem('Termux', Icons.terminal, 'termux_console'),
+              _ActionItem('Node Setup', Icons.hub, 'node_setup'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildCategory(
+            'AUTOMATION',
+            Icons.auto_awesome_motion,
+            [
+              _ActionItem('Autowork', Icons.tune, 'autowork'),
+              _ActionItem('Run Now', Icons.play_circle_fill, 'run_autowork'),
             ],
           ),
           const SizedBox(height: 16),
@@ -567,9 +662,29 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
   }
 
   Widget _buildOverviewCard() {
-    final gatewayOk = _connectionCheck?['success'] == true;
+    final gatewayOk = _connectionCheck?['success'] == true ||
+        _gatewayStatus?.online == true ||
+        _runtimeStatus?.gatewayRunning == true;
     final metricsOk = _lastMetrics?.isAvailable == true;
     final helperOk = _runtimeStatus?.helperRunning == true;
+    final totalAgents = (_agentStats?['totalAgents'] as int?) ??
+        _gatewayStatus?.agents?.length ??
+        0;
+    final activeAgents = (_agentStats?['activeAgents'] as int?) ??
+        (_gatewayStatus?.agents
+                ?.where((agent) => agent.isActive || agent.status == 'active')
+                .length ??
+            0);
+    final nodeCount = _gatewayStatus?.nodes?.length ?? 0;
+    final autoworkEnabled = _autoworkConfig?.isEnabled == true;
+    final autoworkTargets =
+        _autoworkConfig?.targets.where((target) => target.canSend).length ?? 0;
+    final summaryLine = _service == null
+        ? 'No gateway configured'
+        : gatewayOk
+            ? '${_isLocalGateway(_service!.baseUrl) ? 'Android local / LAN' : 'Remote gateway'}'
+                ' • ${_connectionCheck?['endpoint'] ?? 'live session'}'
+            : _service!.baseUrl;
 
     return Card(
       child: Padding(
@@ -585,8 +700,44 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _service?.baseUrl ?? 'No gateway configured',
-              style: Theme.of(context).textTheme.bodySmall,
+              summaryLine,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: gatewayOk ? Colors.grey[700] : Colors.red.shade700,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildOverviewStat(
+                    'Agents',
+                    '$totalAgents',
+                    Icons.people_alt_outlined,
+                    activeAgents > 0 ? Colors.green : Colors.grey,
+                    subtitle: '$activeAgents active',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildOverviewStat(
+                    'Nodes',
+                    '$nodeCount',
+                    Icons.hub_outlined,
+                    nodeCount > 0 ? Colors.blue : Colors.grey,
+                    subtitle: nodeCount > 0 ? 'connected' : 'not attached',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildOverviewStat(
+                    'Autowork',
+                    autoworkEnabled ? '$autoworkTargets' : 'Off',
+                    Icons.auto_awesome_motion,
+                    autoworkEnabled ? Colors.deepPurple : Colors.grey,
+                    subtitle: autoworkEnabled ? 'ready now' : 'disabled',
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Wrap(
@@ -607,8 +758,22 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
                 ),
                 if (_runtimeStatus != null)
                   _buildStatusPill(
-                    helperOk ? 'Helper running' : 'Helper missing',
-                    helperOk ? Colors.green : Colors.orange,
+                    _runtimeStatus!.gatewayRunning
+                        ? 'Local runtime reachable'
+                        : 'Runtime unavailable',
+                    _runtimeStatus!.gatewayRunning
+                        ? Colors.green
+                        : Colors.orange,
+                  ),
+                if (_runtimeStatus != null)
+                  _buildStatusPill(
+                    helperOk ? 'Helper running' : 'Helper optional/offline',
+                    helperOk ? Colors.green : Colors.blueGrey,
+                  ),
+                if (_overviewRefreshedAt != null)
+                  _buildStatusPill(
+                    'Updated ${_timeAgo(_overviewRefreshedAt!)}',
+                    Colors.blueGrey,
                   ),
               ],
             ),
@@ -634,6 +799,53 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildOverviewStat(
+    String label,
+    String value,
+    IconData icon,
+    Color color, {
+    required String subtitle,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+          ),
+          const SizedBox(height: 2),
+          Text(label, style: Theme.of(context).textTheme.labelMedium),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[700],
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _timeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    return '${diff.inHours}h ago';
   }
 
   Widget _buildCategory(

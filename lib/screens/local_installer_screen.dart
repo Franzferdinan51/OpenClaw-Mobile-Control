@@ -7,7 +7,9 @@ import '../services/gateway_service.dart';
 import '../services/termux_service.dart';
 import '../services/termux_run_command_service.dart';
 import '../utils/android_package_detector.dart';
+import 'agent_library_screen.dart';
 import 'connect_gateway_screen.dart';
+import 'node_settings_screen.dart';
 
 /// Local OpenClaw Installer Screen
 ///
@@ -1322,7 +1324,39 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               minimumSize: const Size(double.infinity, 48),
             ),
             icon: const Icon(Icons.link),
-            label: const Text('Connect to Gateway'),
+            label: const Text('Connect Local or Remote Gateway'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AgentLibraryScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.psychology_alt),
+            label: const Text('Agent Setup'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const NodeSettingsScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.hub),
+            label: const Text('Node Setup'),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -1370,6 +1404,22 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             icon: const Icon(Icons.open_in_new),
             label: const Text('Open Termux Releases'),
           ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ConnectGatewayScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.link),
+            label: const Text('Use Remote Gateway Instead'),
+          ),
         ],
       );
     }
@@ -1402,6 +1452,22 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             ),
             icon: const Icon(Icons.terminal),
             label: const Text('Open Termux'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ConnectGatewayScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.link),
+            label: const Text('Use Remote Gateway Instead'),
           ),
         ],
       );
@@ -1445,6 +1511,22 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
           ),
           icon: const Icon(Icons.terminal),
           label: const Text('Open Termux'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const ConnectGatewayScreen(),
+              ),
+            );
+          },
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 48),
+          ),
+          icon: const Icon(Icons.link),
+          label: const Text('Connect to Remote Gateway Instead'),
         ),
       ],
     );

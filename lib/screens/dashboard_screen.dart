@@ -9,13 +9,16 @@ import '../widgets/connection_status_card.dart';
 import '../widgets/connection_status_icon.dart';
 import '../widgets/gateway_status_card.dart';
 import '../widgets/agent_visualization_widget.dart';
+import 'agent_library_screen.dart';
 import 'settings_screen.dart';
 import 'connect_gateway_screen.dart';
 import 'logs_screen.dart';
 import 'chat_screen.dart';
 import 'termux_screen.dart';
 import 'agent_monitor_screen.dart';
+import 'autowork_screen.dart';
 import 'local_installer_screen.dart';
+import 'node_settings_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -314,13 +317,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       // Enhanced Gateway Status Card
                       GatewayStatusCard(
                         status: _status,
+                        liveStats: _buildGatewayLiveStats(),
                         lastRefresh: _lastRefresh,
                         onRefresh: _refreshStatus,
                       ),
                       const SizedBox(height: 16),
 
-                      // System Health
-                      _buildSystemHealthCard(),
+                      _buildWorkloadCard(),
                       const SizedBox(height: 16),
 
                       if (_isLocalInstall) ...[
@@ -861,19 +864,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildSystemHealthCard() {
-    final localSystem = _localMetrics?.systemMetrics;
-    final cpuPercent = localSystem?.cpuPercent ?? _status?.cpuPercent;
-    final memoryPercent = localSystem?.memoryPercent ?? _status?.memoryPercent;
-    final memoryDetail =
-        localSystem?.formattedMemory ?? _status?.formattedMemory;
-    final hasAnySystemMetrics = cpuPercent != null || memoryPercent != null;
-    final metricsSource = _localMetrics?.source ?? 'gateway';
+  Map<String, dynamic> _buildGatewayLiveStats() {
+    final agents = _status?.agents ?? [];
+    final activeAgents = agents
+        .where((agent) => agent.isActive || agent.status == 'active')
+        .length;
+    final totalTokens =
+        agents.fold<int>(0, (sum, agent) => sum + (agent.totalTokens ?? 0));
+
+    return {
+      'totalAgents': agents.length,
+      'activeAgents': activeAgents,
+      'totalTokens': totalTokens,
+    };
+  }
+
+  Widget _buildWorkloadCard() {
+    final stats = _buildGatewayLiveStats();
+    final totalAgents = stats['totalAgents'] as int? ?? 0;
+    final activeAgents = stats['activeAgents'] as int? ?? 0;
+    final totalTokens = stats['totalTokens'] as int? ?? 0;
+    final nodeCount = _status?.nodes?.length ?? 0;
+    final metricsSource = _localMetrics?.source;
     final fetchedAt = _localMetrics?.fetchedAt;
-    final metricsAge =
-        fetchedAt != null ? DateTime.now().difference(fetchedAt) : null;
-    final isStale =
-        metricsAge != null && metricsAge > const Duration(seconds: 45);
+    final helperRunning = _runtimeStatus?.helperRunning == true;
 
     return Card(
       child: Padding(
@@ -883,68 +897,92 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.health_and_safety,
+                Icon(Icons.auto_graph,
                     color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
-                Text(
-                  'System Health',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                Expanded(
+                  child: Text(
+                    'Live Workload',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
                 ),
+                if (_status?.isPaused == true)
+                  _buildMetaChip(
+                    Icons.pause_circle_outline,
+                    'Paused',
+                    foreground: Colors.orange.shade800,
+                    background: Colors.orange.shade100,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildMetaChip(
+                  Icons.people_alt_outlined,
+                  '$totalAgents sessions',
+                ),
+                _buildMetaChip(
+                  Icons.play_circle_outline,
+                  '$activeAgents active',
+                  foreground: activeAgents > 0
+                      ? Colors.green.shade700
+                      : Colors.grey[800],
+                  background: activeAgents > 0
+                      ? Colors.green.withValues(alpha: 0.10)
+                      : null,
+                ),
+                _buildMetaChip(Icons.hub_outlined, '$nodeCount nodes'),
+                _buildMetaChip(
+                  helperRunning ? Icons.memory : Icons.router_outlined,
+                  helperRunning
+                      ? 'Helper + gateway'
+                      : _isLocalInstall
+                          ? 'Gateway direct'
+                          : 'Remote gateway',
+                ),
+                if (metricsSource != null)
+                  _buildMetaChip(Icons.bolt_outlined, 'Source: $metricsSource'),
+                if (fetchedAt != null)
+                  _buildMetaChip(
+                    Icons.schedule,
+                    'Sampled ${_getTimeAgo(fetchedAt)}',
+                  ),
               ],
             ),
             const SizedBox(height: 16),
-            if (_localMetrics != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _buildMetaChip(Icons.memory, 'Source: $metricsSource'),
-                    if (fetchedAt != null)
-                      _buildMetaChip(
-                        Icons.schedule,
-                        'Sampled ${_getTimeAgo(fetchedAt)}',
-                      ),
-                    if (_localMetrics!.fetchDuration > Duration.zero)
-                      _buildMetaChip(
-                        Icons.speed,
-                        '${_localMetrics!.fetchDuration.inMilliseconds}ms',
-                      ),
-                    if (isStale)
-                      _buildMetaChip(
-                        Icons.warning_amber_rounded,
-                        'Stale',
-                        foreground: Colors.orange.shade800,
-                        background: Colors.orange.shade100,
-                      ),
-                  ],
-                ),
-              ),
-            if (cpuPercent != null)
-              _buildHealthIndicator('CPU Usage', cpuPercent, Colors.green,
-                  Colors.orange, Colors.red)
-            else
-              _buildUnavailableHealthIndicator('CPU Usage'),
-            const SizedBox(height: 12),
-            if (memoryPercent != null)
-              _buildHealthIndicator('Memory', memoryPercent, Colors.green,
-                  Colors.orange, Colors.red,
-                  detail: memoryDetail)
-            else
-              _buildUnavailableHealthIndicator('Memory', detail: memoryDetail),
-            if (!hasAnySystemMetrics) ...[
-              const SizedBox(height: 12),
-              Text(
-                'This gateway is not currently exposing live CPU/memory stats, so the dashboard will show them as unavailable instead of fake 0% values.',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.grey[700]),
-              ),
-            ],
+            _buildWorkloadRow(
+              'Chat readiness',
+              activeAgents > 0
+                  ? 'Primary sessions are available for direct chat.'
+                  : 'Gateway is online, but no active sessions are attached yet.',
+              activeAgents > 0 ? Colors.green : Colors.orange,
+              activeAgents > 0 ? Icons.mark_chat_read : Icons.mark_chat_unread,
+            ),
+            const SizedBox(height: 10),
+            _buildWorkloadRow(
+              'Tool traffic',
+              totalTokens > 0
+                  ? '${_formatCompactNumber(totalTokens)} tokens visible in live session data.'
+                  : 'No token flow reported yet from the current sessions.',
+              totalTokens > 0 ? Colors.deepOrange : Colors.blueGrey,
+              totalTokens > 0
+                  ? Icons.local_fire_department_outlined
+                  : Icons.insights_outlined,
+            ),
+            const SizedBox(height: 10),
+            _buildWorkloadRow(
+              'Runtime path',
+              _isLocalInstall
+                  ? 'This device can run OpenClaw locally in Termux or connect to a remote gateway.'
+                  : 'This app is connected to a remote OpenClaw gateway.',
+              Theme.of(context).colorScheme.primary,
+              _isLocalInstall ? Icons.phone_android : Icons.cloud_outlined,
+            ),
           ],
         ),
       ),
@@ -1143,95 +1181,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildHealthIndicator(
-      String label, double percent, Color good, Color warn, Color error,
-      {String? detail}) {
-    final clampedPercent = percent.clamp(0.0, 100.0);
-    final color = clampedPercent < 70
-        ? good
-        : clampedPercent < 90
-            ? warn
-            : error;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: Theme.of(context).textTheme.labelMedium),
-            Text(
-              '${clampedPercent.toStringAsFixed(1)}%',
-              style: Theme.of(context)
-                  .textTheme
-                  .labelMedium
-                  ?.copyWith(color: color, fontWeight: FontWeight.bold),
+  Widget _buildWorkloadRow(
+    String title,
+    String body,
+    Color color,
+    IconData icon,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: color,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[800],
+                      ),
+                ),
+              ],
             ),
-          ],
-        ),
-        if (detail != null) ...[
-          const SizedBox(height: 2),
-          Text(
-            detail,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.grey[700]),
           ),
         ],
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: clampedPercent / 100,
-            backgroundColor: Colors.grey[300],
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-            minHeight: 6,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _buildUnavailableHealthIndicator(String label, {String? detail}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: Theme.of(context).textTheme.labelMedium),
-            Text(
-              'Unavailable',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Colors.grey[700],
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-          ],
-        ),
-        if (detail != null) ...[
-          const SizedBox(height: 2),
-          Text(
-            detail,
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.grey[700]),
-          ),
-        ],
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: 0,
-            backgroundColor: Colors.grey[300],
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.grey[400]!),
-            minHeight: 6,
-          ),
-        ),
-      ],
-    );
+  String _formatCompactNumber(int value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
+    }
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}K';
+    }
+    return value.toString();
   }
 
   Widget _buildQuickActionsCard() {
@@ -1284,6 +1285,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           MaterialPageRoute(
                               builder: (context) => const LogsScreen()),
                         )),
+                _buildQuickActionButton(
+                    'Autowork',
+                    Icons.auto_awesome_motion,
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) =>
+                                  AutoworkScreen(gatewayService: _service)),
+                        )),
+                _buildQuickActionButton(
+                    'Agents Setup',
+                    Icons.psychology_alt,
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => const AgentLibraryScreen()),
+                        )),
+                _buildQuickActionButton(
+                    'Nodes Setup',
+                    Icons.hub,
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => const NodeSettingsScreen()),
+                        )),
+                _buildQuickActionButton('Connect', Icons.link,
+                    () => _navigateToConnectGateway(context)),
                 _buildQuickActionButton(
                     'Runtime',
                     Icons.developer_mode,

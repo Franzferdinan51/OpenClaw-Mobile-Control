@@ -267,6 +267,8 @@ class _ChatScreenState extends State<ChatScreen> {
           showWeatherForecast: msg.showWeatherForecast,
           isNight: msg.isNight,
           chartWidget: msg.chartWidget,
+          infoCardWidget: msg.infoCardWidget,
+          statusWidget: msg.statusWidget,
         ));
       } else {
         // Update existing message status
@@ -286,6 +288,8 @@ class _ChatScreenState extends State<ChatScreen> {
               showWeatherForecast: existing.showWeatherForecast,
               isNight: existing.isNight,
               chartWidget: existing.chartWidget,
+              infoCardWidget: existing.infoCardWidget,
+              statusWidget: existing.statusWidget,
             );
           }
         }

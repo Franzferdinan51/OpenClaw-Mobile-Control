@@ -53,7 +53,7 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     final prefs = await SharedPreferences.getInstance();
 
     // Check if first launch
-    _isFirstLaunch = prefs.getBool('has_completed_setup') ?? true;
+    _isFirstLaunch = !(prefs.getBool('has_completed_setup') ?? false);
     final hasShownSuccessDialog =
         prefs.getBool('has_shown_connection_success') ?? false;
 
@@ -62,39 +62,52 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     String? gatewayName = prefs.getString('gateway_name');
 
     // Try last connected gateway first
-    if (gatewayUrl != null) {
-      _gatewayService = GatewayService(baseUrl: gatewayUrl, token: token);
-      final status = await _gatewayService!.getStatus();
-
-      if (status != null && status.online) {
-        // Successfully connected to last gateway
-        // Start connection monitoring
-        connectionMonitor.startMonitoring(
-          _gatewayService!,
+    if (gatewayUrl != null &&
+        await _tryStartupGateway(
+          prefs,
+          gatewayUrl: gatewayUrl,
           gatewayName: gatewayName,
-        );
+          token: token,
+          showSuccessDialog: !hasShownSuccessDialog,
+        )) {
+      return;
+    }
 
-        setState(() {
-          _isLoading = false;
-          _isFirstLaunch = false;
-        });
+    final lastConnected = await _discoveryService.getLastConnected();
+    final fallbackCandidates = <Map<String, String?>>[
+      {
+        'url': 'http://127.0.0.1:18789',
+        'name': 'Local Gateway (This Device)',
+      },
+      {
+        'url': 'http://localhost:18789',
+        'name': 'Local Gateway (Loopback)',
+      },
+      {
+        'url': 'http://10.0.2.2:18789',
+        'name': 'Android Emulator Gateway',
+      },
+      if (lastConnected != null &&
+          lastConnected.url.isNotEmpty &&
+          lastConnected.url != gatewayUrl)
+        {
+          'url': lastConnected.url,
+          'name': lastConnected.name,
+          'token': lastConnected.token ?? token,
+        },
+    ];
 
-        // Show success dialog on first connection (but not on app restart)
-        if (!hasShownSuccessDialog && mounted) {
-          await prefs.setBool('has_shown_connection_success', true);
+    for (final candidate in fallbackCandidates) {
+      final candidateUrl = candidate['url'];
+      if (candidateUrl == null || candidateUrl == gatewayUrl) continue;
 
-          // Show success dialog
-          final status = await _gatewayService!.getStatus();
-          if (status != null && mounted) {
-            await showConnectionSuccessDialog(
-              context: context,
-              gatewayName: gatewayName ?? 'OpenClaw Gateway',
-              gatewayUrl: gatewayUrl,
-              version: status.version,
-              uptime: status.uptime,
-            );
-          }
-        }
+      if (await _tryStartupGateway(
+        prefs,
+        gatewayUrl: candidateUrl,
+        gatewayName: candidate['name'],
+        token: candidate['token'] ?? token,
+        showSuccessDialog: !hasShownSuccessDialog,
+      )) {
         return;
       }
     }
@@ -102,44 +115,14 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     // Last gateway failed, try discovery
     final discovered = await _discoveryService.scan();
 
-    if (discovered.isNotEmpty) {
-      // Connect to first discovered gateway
-      final gateway = discovered.first;
-      gatewayUrl = gateway.url;
-      _gatewayService = GatewayService(baseUrl: gatewayUrl!);
-
-      final status = await _gatewayService!.getStatus();
-      if (status != null && status.online) {
-        // Save discovered gateway
-        await prefs.setString('gateway_url', gatewayUrl!);
-        await prefs.setString('gateway_name', gateway.name);
-        await prefs.setBool('has_completed_setup', true);
-        await prefs.setBool('has_shown_connection_success', true);
-
-        // Get status for success dialog
-        final status = await _gatewayService!.getStatus();
-
-        // Start connection monitoring
-        connectionMonitor.startMonitoring(
-          _gatewayService!,
-          gatewayName: gateway.name,
-        );
-
-        setState(() {
-          _isLoading = false;
-          _isFirstLaunch = false;
-        });
-
-        // Show success dialog for discovered gateway
-        if (status != null && mounted) {
-          await showConnectionSuccessDialog(
-            context: context,
-            gatewayName: gateway.name ?? 'OpenClaw Gateway',
-            gatewayUrl: gatewayUrl,
-            version: status.version,
-            uptime: status.uptime,
-          );
-        }
+    for (final gateway in discovered) {
+      if (await _tryStartupGateway(
+        prefs,
+        gatewayUrl: gateway.url,
+        gatewayName: gateway.name,
+        token: gateway.token ?? token,
+        showSuccessDialog: !hasShownSuccessDialog,
+      )) {
         return;
       }
     }
@@ -152,6 +135,58 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
           ? 'Could not connect to last gateway and no auto-discovered gateways found'
           : 'No gateway configured';
     });
+  }
+
+  Future<bool> _tryStartupGateway(
+    SharedPreferences prefs, {
+    required String gatewayUrl,
+    String? gatewayName,
+    String? token,
+    required bool showSuccessDialog,
+  }) async {
+    final service = GatewayService(baseUrl: gatewayUrl, token: token);
+    final status = await service.getStatus(timeout: const Duration(seconds: 3));
+    if (status == null || !status.online) {
+      return false;
+    }
+
+    _gatewayService = service;
+    await prefs.setString('gateway_url', gatewayUrl);
+    if (gatewayName != null && gatewayName.isNotEmpty) {
+      await prefs.setString('gateway_name', gatewayName);
+    }
+    if (token != null && token.isNotEmpty) {
+      await prefs.setString('gateway_token', token);
+    }
+    await prefs.setBool('has_completed_setup', true);
+    if (showSuccessDialog) {
+      await prefs.setBool('has_shown_connection_success', true);
+    }
+
+    connectionMonitor.startMonitoring(
+      service,
+      gatewayName: gatewayName,
+    );
+
+    if (!mounted) return true;
+
+    setState(() {
+      _isLoading = false;
+      _isFirstLaunch = false;
+      _autoConnectFailed = false;
+      _initialError = null;
+    });
+
+    if (showSuccessDialog) {
+      await showConnectionSuccessDialog(
+        context: context,
+        gatewayName: gatewayName ?? 'OpenClaw Gateway',
+        gatewayUrl: gatewayUrl,
+        status: status,
+      );
+    }
+
+    return true;
   }
 
   void _onGatewayChanged() {
