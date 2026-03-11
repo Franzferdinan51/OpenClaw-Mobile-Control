@@ -13,6 +13,7 @@
 /// Chat Flow:
 /// 1. Client sends: { "type": "chat", "data": { "content": "hello" } }
 /// 2. Server responds: { "type": "chat.response", "data": { "content": "response", "role": "assistant" } }
+library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -85,11 +86,13 @@ class GatewayWebSocketClient {
   WebSocketState _state = WebSocketState.disconnected;
   WebSocketState get state => _state;
   
-  // Reconnection
+  // Reconnection with exponential backoff
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 10;
-  static const Duration _reconnectDelay = Duration(seconds: 3);
+  static const Duration _initialReconnectDelay = Duration(seconds: 2);
+  static const Duration _maxReconnectDelay = Duration(seconds: 30);
+  bool _isReconnecting = false;
 
   // Heartbeat
   Timer? _heartbeatTimer;
@@ -210,6 +213,8 @@ class GatewayWebSocketClient {
     
     _stopHeartbeat();
     _cancelReconnect();
+    _isReconnecting = false;
+    _reconnectAttempts = 0;
     
     await _subscription?.cancel();
     _subscription = null;
@@ -302,7 +307,14 @@ class GatewayWebSocketClient {
   }
 
   void _handleDisconnection() {
+    // Prevent handling disconnection if already intentionally disconnected
     if (_state == WebSocketState.disconnected) return;
+    
+    // Prevent duplicate reconnection scheduling
+    if (_isReconnecting) {
+      debugPrint('⚠️ Already reconnecting, skipping duplicate disconnection handler');
+      return;
+    }
     
     _stopHeartbeat();
     _updateState(WebSocketState.disconnected);
@@ -316,20 +328,40 @@ class GatewayWebSocketClient {
   void _scheduleReconnect() {
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       debugPrint('❌ Max reconnect attempts reached');
+      _isReconnecting = false;
       return;
     }
 
+    // Prevent multiple concurrent reconnect timers
+    if (_isReconnecting && _reconnectTimer != null) {
+      return;
+    }
+    
     _cancelReconnect();
     _updateState(WebSocketState.reconnecting);
+    _isReconnecting = true;
 
-    _reconnectTimer = Timer(_reconnectDelay, () async {
+    // Calculate exponential backoff delay: 2s, 4s, 8s, 16s, max 30s
+    final delaySeconds = (_initialReconnectDelay.inSeconds * 
+        (1 << _reconnectAttempts.clamp(0, 4))).clamp(
+          _initialReconnectDelay.inSeconds, 
+          _maxReconnectDelay.inSeconds
+        );
+    final delay = Duration(seconds: delaySeconds);
+    
+    debugPrint('🔄 Scheduling reconnect in ${delaySeconds}s (attempt ${_reconnectAttempts + 1}/$_maxReconnectAttempts)');
+    
+    _reconnectTimer = Timer(delay, () async {
       _reconnectAttempts++;
       debugPrint('🔄 Reconnecting (attempt $_reconnectAttempts/$_maxReconnectAttempts)...');
       
       try {
         await connect();
+        _isReconnecting = false;
       } catch (e) {
         debugPrint('❌ Reconnect failed: $e');
+        // Continue with exponential backoff
+        _isReconnecting = false;
         _scheduleReconnect();
       }
     });

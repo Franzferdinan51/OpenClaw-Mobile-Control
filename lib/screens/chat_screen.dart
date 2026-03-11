@@ -169,23 +169,51 @@ class _ChatScreenState extends State<ChatScreen> {
   }
   
   void _syncMessagesFromService(List<ChatMessageUI> serviceMessages) {
-    // Clear and rebuild messages from service
-    _messages.clear();
+    // Smart merge: only update changed messages, preserve local state
+    final existingIds = _messages.map((m) => m.id).toSet();
+    final serviceIds = serviceMessages.map((m) => m.id).toSet();
     
+    // Remove messages that no longer exist in service
+    _messages.removeWhere((m) => !serviceIds.contains(m.id));
+    
+    // Add new messages from service
     for (final msg in serviceMessages) {
-      _messages.add(ChatMsg(
-        id: msg.id,
-        content: msg.content,
-        isUser: msg.isUser,
-        timestamp: msg.timestamp,
-        isError: msg.status == ChatMessageStatus.error,
-        isSending: msg.status == ChatMessageStatus.sending,
-        agent: msg.agentName != null ? _getAgentByName(msg.agentName!) : null,
-        weatherWidget: msg.weatherWidget,
-        showWeatherForecast: msg.showWeatherForecast,
-        isNight: msg.isNight,
-        chartWidget: msg.chartWidget,
-      ));
+      if (!existingIds.contains(msg.id)) {
+        _messages.add(ChatMsg(
+          id: msg.id,
+          content: msg.content,
+          isUser: msg.isUser,
+          timestamp: msg.timestamp,
+          isError: msg.status == ChatMessageStatus.error,
+          isSending: msg.status == ChatMessageStatus.sending,
+          agent: msg.agentName != null ? _getAgentByName(msg.agentName!) : null,
+          weatherWidget: msg.weatherWidget,
+          showWeatherForecast: msg.showWeatherForecast,
+          isNight: msg.isNight,
+          chartWidget: msg.chartWidget,
+        ));
+      } else {
+        // Update existing message status
+        final index = _messages.indexWhere((m) => m.id == msg.id);
+        if (index != -1) {
+          final existing = _messages[index];
+          if (existing.isSending && msg.status != ChatMessageStatus.sending) {
+            _messages[index] = ChatMsg(
+              id: existing.id,
+              content: existing.content,
+              isUser: existing.isUser,
+              timestamp: existing.timestamp,
+              isError: msg.status == ChatMessageStatus.error,
+              isSending: false,
+              agent: existing.agent,
+              weatherWidget: existing.weatherWidget,
+              showWeatherForecast: existing.showWeatherForecast,
+              isNight: existing.isNight,
+              chartWidget: existing.chartWidget,
+            );
+          }
+        }
+      }
     }
     
     setState(() {});
@@ -265,7 +293,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  /// Send message to gateway via WebSocket - THIS IS THE FIX
+  /// Send message to gateway via WebSocket with timeout
   void _sendMessage() {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
@@ -274,8 +302,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.clear();
 
     // Add user message to UI immediately (optimistic update)
+    final userMessageId = 'user_${DateTime.now().millisecondsSinceEpoch}';
     final userMessage = ChatMsg(
-      id: 'user_${DateTime.now().millisecondsSinceEpoch}',
+      id: userMessageId,
       content: text,
       isUser: true,
       timestamp: DateTime.now(),
@@ -290,17 +319,42 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Send via chat service if available
     if (_chatService != null && _isConnected) {
-      _chatService!.sendMessage(text).then((success) {
+      // Set up timeout for send operation
+      final sendFuture = _chatService!.sendMessage(text);
+      
+      // 30 second timeout for send
+      sendFuture.timeout(const Duration(seconds: 30), onTimeout: () {
+        debugPrint('⏱️ Send timeout');
+        if (!mounted) return false;
+        
+        setState(() {
+          final index = _messages.indexWhere((m) => m.id == userMessageId);
+          if (index != -1) {
+            _messages[index] = ChatMsg(
+              id: userMessageId,
+              content: text,
+              isUser: true,
+              timestamp: DateTime.now(),
+              isError: true,
+            );
+          }
+        });
+        
+        _addSystemMessage('⚠️ Message send timed out. Please check your connection and try again.');
+        return false;
+      }).then((success) {
+        if (!mounted) return;
+        
         if (!success) {
           // Show error
           setState(() {
-            final index = _messages.indexWhere((m) => m.id == userMessage.id);
+            final index = _messages.indexWhere((m) => m.id == userMessageId);
             if (index != -1) {
               _messages[index] = ChatMsg(
-                id: userMessage.id,
-                content: userMessage.content,
+                id: userMessageId,
+                content: text,
                 isUser: true,
-                timestamp: userMessage.timestamp,
+                timestamp: DateTime.now(),
                 isError: true,
               );
             }
@@ -308,29 +362,21 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
     } else {
-      // No connection - show error after a delay
-      Future.delayed(const Duration(milliseconds: 500), () {
+      // No connection - show error after a short delay
+      Future.delayed(const Duration(milliseconds: 300), () {
         if (!mounted) return;
         
         setState(() {
-          final index = _messages.indexWhere((m) => m.id == userMessage.id);
+          final index = _messages.indexWhere((m) => m.id == userMessageId);
           if (index != -1) {
             _messages[index] = ChatMsg(
-              id: userMessage.id,
-              content: userMessage.content,
+              id: userMessageId,
+              content: text,
               isUser: true,
-              timestamp: userMessage.timestamp,
+              timestamp: DateTime.now(),
               isError: true,
             );
           }
-          
-          _messages.add(ChatMsg(
-            id: 'error_${DateTime.now().millisecondsSinceEpoch}',
-            content: '❌ Not connected to gateway. Please check your connection in Settings.',
-            isUser: false,
-            timestamp: DateTime.now(),
-            isError: true,
-          ));
         });
         _scrollToBottom();
       });
@@ -445,10 +491,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildConnectionStatus() {
+    // Compact inline status for connected state (minimal intrusion)
+    if (_isConnected && _connectionError.isEmpty) {
+      return const SizedBox.shrink(); // Don't show anything when connected
+    }
+    
+    // Error state - show actionable banner
     if (_connectionError.isNotEmpty) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.red.shade50,
           border: Border(
@@ -457,111 +509,63 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         child: Row(
           children: [
-            Icon(Icons.error_outline, color: Colors.red.shade700, size: 18),
+            Icon(Icons.error_outline, color: Colors.red.shade700, size: 16),
             const SizedBox(width: 8),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Connection Error',
-                    style: TextStyle(
-                      color: Colors.red.shade700,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    _connectionError,
-                    style: TextStyle(color: Colors.red.shade600, fontSize: 11),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+              child: Text(
+                'Connection error. Tap retry to reconnect.',
+                style: TextStyle(
+                  color: Colors.red.shade700,
+                  fontSize: 12,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             const SizedBox(width: 8),
-            ElevatedButton(
+            TextButton(
               onPressed: _connectToGateway,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red.shade700,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red.shade700,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: const Text('Retry'),
+              child: const Text('Retry', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
       );
     }
     
-    if (!_isConnected) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.orange.shade50,
-          border: Border(
-            bottom: BorderSide(color: Colors.orange.shade200, width: 1),
-          ),
-        ),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: Colors.orange.shade700,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Connecting to gateway...',
-                    style: TextStyle(
-                      color: Colors.orange.shade700,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'Establishing WebSocket connection',
-                    style: TextStyle(color: Colors.orange.shade600, fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    
-    // Connected - show subtle success indicator
+    // Connecting state - show compact indicator
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.green.shade50,
+        color: Colors.orange.shade50,
         border: Border(
-          bottom: BorderSide(color: Colors.green.shade200, width: 1),
+          bottom: BorderSide(color: Colors.orange.shade200, width: 1),
         ),
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.check_circle, color: Colors.green.shade700, size: 16),
-          const SizedBox(width: 6),
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.orange.shade700,
+            ),
+          ),
+          const SizedBox(width: 8),
           Text(
-            'Connected to gateway',
+            'Connecting...',
             style: TextStyle(
-              color: Colors.green.shade700,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
+              color: Colors.orange.shade700,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -780,7 +784,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           
-          // Input area
+          // Input area - compact design for small screens
           Container(
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surface,
@@ -792,23 +796,79 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ],
             ),
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             child: SafeArea(
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // Agent selector button
-                  IconButton(
-                    icon: const Icon(Icons.psychology),
-                    onPressed: _showAgentSelector,
-                    tooltip: 'Select Agent',
-                    color: _activeAgent != null ? _activeAgent!.division.color : null,
-                  ),
-                  
-                  // Prompt templates button
-                  IconButton(
-                    icon: const Icon(Icons.description_outlined),
-                    onPressed: _showTemplates,
-                    tooltip: 'Prompt Templates',
+                  // Overflow menu for actions (saves space on small screens)
+                  PopupMenuButton<String>(
+                    icon: Icon(
+                      Icons.more_vert,
+                      color: _activeAgent?.division.color,
+                    ),
+                    tooltip: 'Actions',
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'agent':
+                          _showAgentSelector();
+                          break;
+                        case 'templates':
+                          _showTemplates();
+                          break;
+                        case 'multi':
+                          _showMultiAgentScreen();
+                          break;
+                        case 'clear':
+                          setState(() {
+                            _messages.clear();
+                            _addWelcomeMessage();
+                            _chatService?.clearMessages();
+                          });
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'agent',
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.psychology,
+                            color: _activeAgent?.division.color,
+                          ),
+                          title: const Text('Select Agent'),
+                          subtitle: _activeAgent != null 
+                              ? Text('Active: ${_activeAgent!.name}')
+                              : null,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'templates',
+                        child: ListTile(
+                          leading: Icon(Icons.description_outlined),
+                          title: Text('Prompt Templates'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'multi',
+                        child: ListTile(
+                          leading: Icon(Icons.group),
+                          title: Text('Multi-Agent Team'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'clear',
+                        child: ListTile(
+                          leading: Icon(Icons.delete_outline, color: Colors.red),
+                          title: Text('Clear Chat', style: TextStyle(color: Colors.red)),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ],
                   ),
                   
                   // Text input field
@@ -835,17 +895,25 @@ class _ChatScreenState extends State<ChatScreen> {
                             width: _isConnected ? 0 : 2,
                           ),
                         ),
+                        // Show connection hint when disconnected
+                        suffixIcon: !_isConnected 
+                            ? Icon(Icons.cloud_off, size: 18, color: Colors.orange.shade400)
+                            : null,
                       ),
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => _sendMessage(),
-                      maxLines: null,
+                      maxLines: 5,
+                      minLines: 1,
                       enabled: _isConnected,
                     ),
                   ),
                   
+                  const SizedBox(width: 8),
+                  
                   // Send button with state management
                   Container(
-                    margin: const EdgeInsets.only(left: 4),
+                    height: 48,
+                    width: 48,
                     decoration: BoxDecoration(
                       color: _isConnected 
                           ? Theme.of(context).colorScheme.primary
@@ -864,9 +932,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         _isConnected ? Icons.send : Icons.cloud_off,
                         color: Colors.white,
                       ),
-                      onPressed: _isConnected ? _sendMessage : null,
-                      tooltip: _isConnected ? 'Send' : 'Not connected',
-                      iconSize: 24,
+                      onPressed: _isConnected ? _sendMessage : () => _connectToGateway(),
+                      tooltip: _isConnected ? 'Send' : 'Reconnect',
+                      iconSize: 22,
                     ),
                   ),
                 ],
@@ -1021,12 +1089,51 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  _formatTime(message.timestamp),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurface.withValues(alpha: 0.5),
-                    fontSize: 11,
-                  ),
+                // Timestamp and retry for failed messages
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _formatTime(message.timestamp),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurface.withValues(alpha: 0.5),
+                        fontSize: 11,
+                      ),
+                    ),
+                    // Retry button for failed user messages
+                    if (message.isError && isUser) ...[
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () => _retryMessage(message),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: colorScheme.errorContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.refresh,
+                                size: 12,
+                                color: colorScheme.onErrorContainer,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Retry',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.onErrorContainer,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -1046,6 +1153,20 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+  
+  /// Retry sending a failed message
+  void _retryMessage(ChatMsg failedMessage) {
+    // Remove the failed message
+    setState(() {
+      _messages.removeWhere((m) => m.id == failedMessage.id);
+    });
+    
+    // Put the content back in the input field
+    _messageController.text = failedMessage.content;
+    
+    // Try sending again
+    _sendMessage();
   }
   
   /// Build generic inline widget based on type
