@@ -2,7 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/gateway_service.dart';
+import '../services/connection_monitor_service.dart';
 import '../models/agent_session.dart';
+import '../models/gateway_status.dart';
+import '../widgets/agent_visualization_widget.dart';
+import '../widgets/gateway_status_card.dart';
+import '../widgets/connection_status_icon.dart';
 
 class AgentMonitorScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -15,11 +20,13 @@ class AgentMonitorScreen extends StatefulWidget {
 
 class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   GatewayService? _service;
+  GatewayStatus? _gatewayStatus;
   List<AgentSession> _agents = [];
   Map<String, dynamic>? _stats;
   bool _loading = true;
   String? _error;
   Timer? _refreshTimer;
+  DateTime? _lastRefresh;
 
   @override
   void initState() {
@@ -49,15 +56,18 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
     if (_service == null) return;
 
     try {
+      final gatewayStatus = await _service!.getStatus();
       final agents = await _service!.getAgents();
       final stats = await _service!.getAgentStats();
 
       if (mounted) {
         setState(() {
+          _gatewayStatus = gatewayStatus;
           _agents = agents ?? [];
           _stats = stats;
           _loading = false;
           _error = null;
+          _lastRefresh = DateTime.now();
         });
       }
     } catch (e) {
@@ -82,6 +92,7 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
       appBar: AppBar(
         title: const Text('Agent Monitor'),
         actions: [
+          const ConnectionStatusIcon(),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshAgents,
@@ -92,7 +103,10 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? _buildErrorState()
-              : _buildContent(),
+              : RefreshIndicator(
+                  onRefresh: _refreshAgents,
+                  child: _buildContent(),
+                ),
     );
   }
 
@@ -117,21 +131,39 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   }
 
   Widget _buildContent() {
-    return RefreshIndicator(
-      onRefresh: _refreshAgents,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _buildStatsCard(),
-          const SizedBox(height: 16),
-          _buildAgentsHeader(),
-          const SizedBox(height: 8),
-          if (_agents.isEmpty)
-            _buildEmptyState()
-          else
-            ..._agents.map((agent) => _buildAgentCard(agent)),
-        ],
-      ),
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Gateway Status
+        GatewayStatusCard(
+          status: _gatewayStatus,
+          lastRefresh: _lastRefresh,
+          onRefresh: _refreshAgents,
+        ),
+        const SizedBox(height: 16),
+        
+        // Quick Stats
+        _buildStatsCard(),
+        const SizedBox(height: 16),
+        
+        // Agent Visualization Widget (compact mode for list integration)
+        AgentVisualizationWidget(
+          gatewayService: _service,
+          gatewayStatus: _gatewayStatus,
+          compact: true,
+        ),
+        const SizedBox(height: 16),
+        
+        // Agents Header
+        _buildAgentsHeader(),
+        const SizedBox(height: 8),
+        
+        // Agent List
+        if (_agents.isEmpty)
+          _buildEmptyState()
+        else
+          ..._agents.map((agent) => _buildAgentCard(agent)),
+      ],
     );
   }
 

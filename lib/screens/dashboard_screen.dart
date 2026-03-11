@@ -6,11 +6,14 @@ import '../services/connection_monitor_service.dart';
 import '../models/gateway_status.dart';
 import '../widgets/connection_status_card.dart';
 import '../widgets/connection_status_icon.dart';
+import '../widgets/gateway_status_card.dart';
+import '../widgets/agent_visualization_widget.dart';
 import 'settings_screen.dart';
 import 'connect_gateway_screen.dart';
 import 'logs_screen.dart';
 import 'chat_screen.dart';
 import 'termux_screen.dart';
+import 'agent_monitor_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -218,13 +221,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       _buildQuickStatsRow(),
                       const SizedBox(height: 16),
                       
+                      // Enhanced Gateway Status Card
+                      GatewayStatusCard(
+                        status: _status,
+                        lastRefresh: _lastRefresh,
+                        onRefresh: _refreshStatus,
+                      ),
+                      const SizedBox(height: 16),
+                      
                       // System Health
                       _buildSystemHealthCard(),
                       const SizedBox(height: 16),
                       
-                      _buildGatewayCard(),
+                      // Agent Visualization
+                      AgentVisualizationWidget(
+                        gatewayService: _service,
+                        gatewayStatus: _status,
+                        onTap: () => _navigateToAgentMonitor(),
+                      ),
                       const SizedBox(height: 16),
-                      _buildAgentsCard(),
                       const SizedBox(height: 16),
                       _buildNodesCard(),
                       const SizedBox(height: 16),
@@ -237,76 +252,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildGatewayCard() {
-    final status = _status;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  status?.online ?? false ? Icons.check_circle : Icons.error,
-                  color: status?.online ?? false ? Colors.green : Colors.red,
-                ),
-                const SizedBox(width: 8),
-                Text('Gateway', style: Theme.of(context).textTheme.titleLarge),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (status != null) ...[
-              _buildInfoRow('Version', status.version == 'unknown' ? 'Unavailable' : status.version),
-              _buildInfoRow('Uptime', _formatUptime(status.uptime)),
-              if (status.cpuPercent != null) _buildInfoRow('CPU', '${status.cpuPercent!.toStringAsFixed(1)}%'),
-              if (status.memoryUsed != null && status.memoryTotal != null)
-                _buildInfoRow('Memory', '${(status.memoryUsed! / 1024 / 1024).toStringAsFixed(0)} MB / ${(status.memoryTotal! / 1024 / 1024).toStringAsFixed(0)} MB'),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAgentsCard() {
-    final agents = _status?.agents ?? [];
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Agents (${agents.length})', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            if (agents.isEmpty)
-              const Text('No agents active')
-            else
-              ...agents.map((agent) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      agent.status == 'active' ? Icons.play_circle : Icons.pause_circle,
-                      color: agent.status == 'active' ? Colors.green : Colors.grey,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(agent.name, style: Theme.of(context).textTheme.titleMedium),
-                          if (agent.currentTask != null)
-                            Text(agent.currentTask!, style: Theme.of(context).textTheme.bodySmall),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              )),
-          ],
-        ),
+  void _navigateToAgentMonitor() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AgentMonitorScreen(gatewayService: _service),
       ),
     );
   }
