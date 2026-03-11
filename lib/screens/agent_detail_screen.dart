@@ -4,6 +4,7 @@ import '../models/agent_personality.dart';
 import '../models/agent_session.dart';
 import '../models/chat_message.dart';
 import '../services/gateway_service.dart';
+import '../widgets/pixel_agent_avatar.dart';
 
 /// Detail screen for a single agent or live session.
 class AgentDetailScreen extends StatefulWidget {
@@ -153,17 +154,24 @@ class _AgentDetailScreenState extends State<AgentDetailScreen> {
                     Row(
                       children: [
                         Container(
-                          width: 64,
-                          height: 64,
+                          padding: const EdgeInsets.all(2),
                           decoration: BoxDecoration(
-                            color: _color.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(18),
+                            color: _color.withValues(alpha: 0.08),
                           ),
-                          child: Center(
-                            child: Text(
-                              _emoji,
-                              style: const TextStyle(fontSize: 32),
-                            ),
+                          child: PixelAgentAvatar(
+                            seed: _name,
+                            emoji: _emoji,
+                            model: widget.session?.model,
+                            kind: widget.session?.kind,
+                            identityTheme: widget.session?.identityTheme,
+                            isActive: widget.session?.isActive ?? false,
+                            isSubagent: widget.session?.isSubagent ?? false,
+                            status: widget.session?.agentStatus ??
+                                widget.session?.statusSummary,
+                            statusColor: _color,
+                            size: 64,
+                            showEmojiBadge: true,
                           ),
                         ),
                         const SizedBox(width: 16),

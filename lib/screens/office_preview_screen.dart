@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/gateway_service.dart';
 import '../models/agent_session.dart';
+import '../widgets/pixel_agent_avatar.dart';
 
 class OfficePreviewScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -41,9 +42,11 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
       setState(() => _service = widget.gatewayService);
     } else {
       final prefs = await SharedPreferences.getInstance();
-      final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
+      final gatewayUrl =
+          prefs.getString('gateway_url') ?? 'http://localhost:18789';
       final token = prefs.getString('gateway_token');
-      setState(() => _service = GatewayService(baseUrl: gatewayUrl, token: token));
+      setState(
+          () => _service = GatewayService(baseUrl: gatewayUrl, token: token));
     }
     await _refreshAgents();
     _startAutoRefresh();
@@ -51,7 +54,8 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
 
   void _startAutoRefresh() {
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) => _refreshAgents());
+    _refreshTimer =
+        Timer.periodic(const Duration(seconds: 3), (_) => _refreshAgents());
   }
 
   Future<void> _refreshAgents() async {
@@ -86,7 +90,7 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
     // Assign agents to zones based on their name or index
     final mainAgents = _agents.where((a) => !a.isSubagent).toList();
     final index = mainAgents.indexOf(agent);
-    
+
     if (index < _zones.length - 1) {
       return _zones[index].name;
     }
@@ -120,7 +124,8 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
         children: [
           const Icon(Icons.error_outline, size: 64, color: Colors.red),
           const SizedBox(height: 16),
-          Text('Connection Error', style: Theme.of(context).textTheme.headlineSmall),
+          Text('Connection Error',
+              style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
           Text(_error!, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 16),
@@ -151,7 +156,7 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
             ),
             child: Stack(
               children: [
-                // Grid background
+                // Office floor background
                 CustomPaint(
                   size: Size.infinite,
                   painter: _GridPainter(),
@@ -180,7 +185,8 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
               children: [
                 _buildStatusBadge('Working', activeCount, Colors.green),
                 _buildStatusBadge('Idle', idleCount, Colors.grey),
-                _buildStatusBadge('Total', _agents.length, const Color(0xFF00D4AA)),
+                _buildStatusBadge(
+                    'Total', _agents.length, const Color(0xFF00D4AA)),
               ],
             ),
           ),
@@ -256,8 +262,8 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
         LayoutBuilder(
           builder: (context, constraints) {
             return Positioned(
-              left: constraints.maxWidth * zone.x - 20,
-              top: constraints.maxHeight * zone.y + 10,
+              left: constraints.maxWidth * zone.x - 28,
+              top: constraints.maxHeight * zone.y - 2,
               child: _buildAgentDot(agent),
             );
           },
@@ -296,42 +302,65 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
   Widget _buildAgentDot(AgentSession agent) {
     final isActive = agent.isActive;
     final statusColor = isActive ? Colors.green : Colors.grey;
-    final pulseSize = isActive ? 16.0 : 12.0;
 
     return GestureDetector(
       onTap: () => _showAgentInfo(agent),
       child: Column(
         children: [
-          // Pulsing indicator for active agents
-          if (isActive)
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 1.0, end: 1.5),
-              duration: const Duration(seconds: 1),
-              builder: (context, value, child) {
-                return Container(
-                  width: pulseSize * value,
-                  height: pulseSize * value,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: statusColor.withOpacity(0.3),
-                  ),
-                );
-              },
-            ),
-          
-          // Agent dot
+          Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.none,
+            children: [
+              if (isActive)
+                TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0.9, end: 1.25),
+                  duration: const Duration(milliseconds: 900),
+                  curve: Curves.easeInOut,
+                  builder: (context, value, child) {
+                    return Container(
+                      width: 34 * value,
+                      height: 34 * value,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: statusColor.withValues(alpha: 0.18),
+                      ),
+                    );
+                  },
+                ),
+              PixelAgentAvatar(
+                seed: agent.name,
+                emoji: agent.emoji,
+                model: agent.model,
+                kind: agent.kind,
+                identityTheme: agent.identityTheme,
+                isActive: agent.isActive,
+                isSubagent: agent.isSubagent,
+                status: agent.agentStatus ?? agent.statusSummary,
+                statusColor: statusColor,
+                size: 34,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
           Container(
-            width: 16,
-            height: 16,
+            constraints: const BoxConstraints(maxWidth: 64),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: statusColor,
-              border: Border.all(color: Colors.white, width: 2),
+              color: Colors.black.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: statusColor.withValues(alpha: 0.3),
+              ),
             ),
-            child: Center(
-              child: Text(
-                agent.emoji ?? '🤖',
-                style: const TextStyle(fontSize: 8),
+            child: Text(
+              agent.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 9,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -346,9 +375,9 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.2),
+            color: color.withValues(alpha: 0.2),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: color.withOpacity(0.5)),
+            border: Border.all(color: color.withValues(alpha: 0.5)),
           ),
           child: Text(
             count.toString(),
@@ -397,10 +426,17 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
             const SizedBox(height: 20),
             Row(
               children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: agent.isActive ? Colors.green.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
-                  child: Text(agent.emoji ?? '🤖', style: const TextStyle(fontSize: 24)),
+                PixelAgentAvatar(
+                  seed: agent.name,
+                  emoji: agent.emoji,
+                  model: agent.model,
+                  kind: agent.kind,
+                  identityTheme: agent.identityTheme,
+                  isActive: agent.isActive,
+                  isSubagent: agent.isSubagent,
+                  status: agent.agentStatus ?? agent.statusSummary,
+                  size: 56,
+                  showEmojiBadge: true,
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -418,14 +454,16 @@ class _OfficePreviewScreenState extends State<OfficePreviewScreen> {
                             height: 8,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: agent.isActive ? Colors.green : Colors.grey,
+                              color:
+                                  agent.isActive ? Colors.green : Colors.grey,
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text(
                             agent.isActive ? 'Working' : 'Idle',
                             style: TextStyle(
-                              color: agent.isActive ? Colors.green : Colors.grey,
+                              color:
+                                  agent.isActive ? Colors.green : Colors.grey,
                             ),
                           ),
                         ],
@@ -496,27 +534,102 @@ class OfficeZone {
 class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.grey[800]!
-      ..strokeWidth = 0.5;
+    final bgPaint = Paint()..color = const Color(0xFF0A0A0F);
+    canvas.drawRect(Offset.zero & size, bgPaint);
 
-    // Draw vertical lines
-    for (var i = 0.25; i < 1.0; i += 0.25) {
-      canvas.drawLine(
-        Offset(size.width * i, 0),
-        Offset(size.width * i, size.height),
-        paint,
+    const cols = 24;
+    const rows = 20;
+    final tileWidth = size.width / cols;
+    final tileHeight = size.height / rows;
+
+    for (var row = 0; row < rows; row++) {
+      for (var col = 0; col < cols; col++) {
+        final tilePaint = Paint()..color = _floorColor(col, row);
+        canvas.drawRect(
+          Rect.fromLTWH(
+            col * tileWidth,
+            row * tileHeight,
+            tileWidth + 0.5,
+            tileHeight + 0.5,
+          ),
+          tilePaint,
+        );
+      }
+    }
+
+    final wallPaint = Paint()
+      ..color = const Color(0xFF232733)
+      ..style = PaintingStyle.fill;
+    final borderPaint = Paint()
+      ..color = const Color(0xFF3B4354)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+
+    final roomRects = [
+      Rect.fromLTWH(
+          tileWidth * 12, tileHeight * 1, tileWidth * 5, tileHeight * 4),
+      Rect.fromLTWH(
+          tileWidth * 12, tileHeight * 6, tileWidth * 5, tileHeight * 4),
+      Rect.fromLTWH(
+          tileWidth * 18, tileHeight * 1, tileWidth * 5, tileHeight * 5),
+      Rect.fromLTWH(
+          tileWidth * 18, tileHeight * 7, tileWidth * 5, tileHeight * 4),
+      Rect.fromLTWH(
+          tileWidth * 18, tileHeight * 12, tileWidth * 5, tileHeight * 5),
+    ];
+
+    for (final rect in roomRects) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(8)),
+        Paint()..color = Colors.black.withValues(alpha: 0.08),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect.deflate(2), const Radius.circular(6)),
+        wallPaint,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect.deflate(2), const Radius.circular(6)),
+        borderPaint,
       );
     }
 
-    // Draw horizontal lines
-    for (var i = 0.25; i < 1.0; i += 0.25) {
+    final gridPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.05)
+      ..strokeWidth = 0.6;
+    for (var i = 1; i < cols; i++) {
       canvas.drawLine(
-        Offset(0, size.height * i),
-        Offset(size.width, size.height * i),
-        paint,
+        Offset(tileWidth * i, 0),
+        Offset(tileWidth * i, size.height),
+        gridPaint,
       );
     }
+    for (var i = 1; i < rows; i++) {
+      canvas.drawLine(
+        Offset(0, tileHeight * i),
+        Offset(size.width, tileHeight * i),
+        gridPaint,
+      );
+    }
+  }
+
+  Color _floorColor(int col, int row) {
+    final even = (col + row).isEven;
+    if (col >= 12 && col <= 16 && row >= 1 && row <= 4) {
+      return even ? const Color(0xFFA1887F) : const Color(0xFF8D6E63);
+    }
+    if (col >= 12 && col <= 16 && row >= 6 && row <= 9) {
+      return even ? const Color(0xFFB3C5D7) : const Color(0xFFA4B8CC);
+    }
+    if (col >= 18 && col <= 22 && row >= 1 && row <= 5) {
+      return even ? const Color(0xFFE8D5B7) : const Color(0xFFDDC9AB);
+    }
+    if (col >= 18 && col <= 22 && row >= 7 && row <= 10) {
+      return even ? const Color(0xFF455A64) : const Color(0xFF37474F);
+    }
+    if (col >= 18 && col <= 22 && row >= 12 && row <= 16) {
+      return even ? const Color(0xFFD1C4E9) : const Color(0xFFC5B6DF);
+    }
+    return even ? const Color(0xFFD7CCC8) : const Color(0xFFCFBFB5);
   }
 
   @override

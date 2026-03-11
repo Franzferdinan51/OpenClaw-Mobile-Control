@@ -1,7 +1,7 @@
 name: duckbot_go
 description: DuckBot Go - Mobile companion for DuckBot with inline generative UI
 publish_to: 'none'
-version: 3.0.6+306  # Merged Codex desktop pass + latest app fixes
+version: 3.0.7+307  # Merged Codex desktop pass + latest agent visualization/avatar updates
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

@@ -47,14 +47,14 @@
 
 ## 🎉 PRODUCT COMPLETION PASS - March 11, 2026
 
-### v3.0.6 Merged Desktop/Codex Release
+### v3.0.7 Merged Desktop/Codex Release
 
 **Completed in integration pass:**
 - ✅ Preserved shared chat lifecycle across Search / Quick Actions / Dashboard navigation
 - ✅ Reduced gateway disconnect/reconnect spam with stronger reconnect guards and backoff
 - ✅ Added dashboard agent visualization components for mobile monitoring
 - ✅ Added local metrics service for local-install gateway/system data sourcing
-- ✅ Cleaned version string drift across app surfaces/docs for v3.0.6
+- ✅ Cleaned version string drift across app surfaces/docs for v3.0.7
 
 ### Chat UX & Connection Diagnostics Enhanced
 

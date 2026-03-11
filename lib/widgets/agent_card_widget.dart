@@ -1,12 +1,13 @@
-/// Agent Card Widget
-///
-/// Individual agent status card inspired by agent-monitor-openclaw-dashboard
-/// Shows agent status, model, current task, and token usage with visual flair
+// Agent Card Widget
+//
+// Individual agent status card inspired by agent-monitor-openclaw-dashboard.
+// Shows agent status, model, current task, and token usage with visual flair.
 
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import '../models/agent_session.dart';
 import '../models/gateway_status.dart';
+import 'pixel_agent_avatar.dart';
 
 class AgentCardWidget extends StatelessWidget {
   final dynamic agent;
@@ -41,7 +42,17 @@ class AgentCardWidget extends StatelessWidget {
               Row(
                 children: [
                   // Pixel-art style avatar
-                  _buildAgentAvatar(data.name, data.emoji, statusColor),
+                  PixelAgentAvatar(
+                    seed: data.name,
+                    emoji: data.emoji,
+                    model: data.model,
+                    kind: data.sessionKind,
+                    isActive: data.isActive,
+                    isSubagent: data.isSubagent,
+                    status: data.status,
+                    statusColor: statusColor,
+                    showEmojiBadge: true,
+                  ),
                   const SizedBox(width: 12),
                   // Agent info
                   Expanded(
@@ -209,69 +220,14 @@ class AgentCardWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildAgentAvatar(String name, String emoji, Color statusColor) {
-    // Generate a deterministic color based on agent name
-    final hash = name.hashCode;
-    final hue = (hash % 360).toDouble();
-    final avatarColor = HSLColor.fromAHSL(1.0, hue, 0.7, 0.6).toColor();
-
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: avatarColor.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: avatarColor.withOpacity(0.3),
-          width: 2,
-        ),
-      ),
-      child: Stack(
-        children: [
-          // Pixel-art style emoji/icon
-          Center(
-            child: Text(
-              emoji,
-              style: const TextStyle(fontSize: 24),
-            ),
-          ),
-          // Status indicator
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              width: 14,
-              height: 14,
-              decoration: BoxDecoration(
-                color: statusColor,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white,
-                  width: 2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: statusColor.withOpacity(0.4),
-                    blurRadius: 4,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildStatusBadge(bool isActive, Color statusColor, String label) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: statusColor.withOpacity(0.1),
+        color: statusColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: statusColor.withOpacity(0.3),
+          color: statusColor.withValues(alpha: 0.3),
           width: 1,
         ),
       ),
@@ -304,10 +260,10 @@ class AgentCardWidget extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: color.withOpacity(0.2),
+          color: color.withValues(alpha: 0.2),
         ),
       ),
       child: Text(
@@ -326,7 +282,7 @@ class AgentCardWidget extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: Colors.purple.withOpacity(0.1),
+        color: Colors.purple.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
@@ -561,7 +517,7 @@ class _AgentCardData {
       );
     }
 
-    final name = 'Unknown Agent';
+    const name = 'Unknown Agent';
     return _AgentCardData(
       name: name,
       emoji: _fallbackEmoji(name),

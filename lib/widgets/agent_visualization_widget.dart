@@ -4,6 +4,7 @@ import '../models/agent_session.dart';
 import '../models/gateway_status.dart';
 import '../services/gateway_service.dart';
 import 'agent_card_widget.dart';
+import 'pixel_agent_avatar.dart';
 
 class AgentVisualizationWidget extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -176,6 +177,10 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                 ],
               ),
               const SizedBox(height: 14),
+              if (agents.isNotEmpty) ...[
+                _buildAvatarStrip(context, agents),
+                const SizedBox(height: 14),
+              ],
               Row(
                 children: [
                   Expanded(
@@ -345,6 +350,11 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                 ],
               ),
               const SizedBox(height: 14),
+              if (agents.isNotEmpty) ...[
+                _buildAvatarStrip(context,
+                    filteredAgents.isNotEmpty ? filteredAgents : agents),
+                const SizedBox(height: 14),
+              ],
               _buildFilterChips(),
               const SizedBox(height: 14),
               if (workLanes.isNotEmpty) ...[
@@ -410,6 +420,49 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     );
   }
 
+  Widget _buildAvatarStrip(BuildContext context, List<dynamic> agents) {
+    final previewAgents = agents.take(6).toList();
+    return SizedBox(
+      height: 64,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: previewAgents.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final agent = previewAgents[index];
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              PixelAgentAvatar(
+                seed: _agentName(agent),
+                emoji: _agentEmoji(agent),
+                model: _agentModel(agent),
+                kind: _agentKind(agent),
+                identityTheme: _identityTheme(agent),
+                isActive: _isAgentActive(agent),
+                isSubagent: _isSubagent(agent),
+                status: _statusSummary(agent),
+                size: 42,
+                showEmojiBadge: true,
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                width: 56,
+                child: Text(
+                  _agentName(agent),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildFilterChips() {
     const filters = [
       {'value': 'all', 'label': 'All'},
@@ -458,13 +511,18 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
       ),
       child: Row(
         children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
+          PixelAgentAvatar(
+            seed: _agentName(agent),
+            emoji: _agentEmoji(agent),
+            model: _agentModel(agent),
+            kind: _agentKind(agent),
+            identityTheme: _identityTheme(agent),
+            isActive: _isAgentActive(agent),
+            isSubagent: _isSubagent(agent),
+            status: _statusSummary(agent),
+            statusColor: color,
+            size: 34,
+            showEmojiBadge: true,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -550,6 +608,27 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     if (agent is AgentSession) return agent.name;
     if (agent is AgentInfo) return agent.name;
     return 'Unknown';
+  }
+
+  String? _agentEmoji(dynamic agent) {
+    if (agent is AgentSession) return agent.emoji;
+    return null;
+  }
+
+  String? _agentModel(dynamic agent) {
+    if (agent is AgentSession) return agent.model;
+    if (agent is AgentInfo) return agent.model;
+    return null;
+  }
+
+  String? _agentKind(dynamic agent) {
+    if (agent is AgentSession) return agent.kind;
+    return null;
+  }
+
+  String? _identityTheme(dynamic agent) {
+    if (agent is AgentSession) return agent.identityTheme;
+    return null;
   }
 
   String? _toolName(dynamic agent) {

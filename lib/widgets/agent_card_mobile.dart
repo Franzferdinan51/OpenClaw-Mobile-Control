@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/agent_session.dart';
+import 'pixel_agent_avatar.dart';
 
 /// Mobile-optimized agent card for dashboard
-/// 
+///
 /// Features:
 /// - Compact card layout for vertical scrolling
 /// - Animated token bar with color thresholds
@@ -29,30 +30,8 @@ class AgentCardMobile extends StatefulWidget {
   State<AgentCardMobile> createState() => _AgentCardMobileState();
 }
 
-class _AgentCardMobileState extends State<AgentCardMobile>
-    with SingleTickerProviderStateMixin {
+class _AgentCardMobileState extends State<AgentCardMobile> {
   bool _expanded = false;
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-    _animation = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeInOut,
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +41,7 @@ class _AgentCardMobileState extends State<AgentCardMobile>
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: _getBehaviorColor().withOpacity(0.3),
+          color: _getBehaviorColor().withValues(alpha: 0.3),
           width: 1,
         ),
       ),
@@ -120,7 +99,8 @@ class _AgentCardMobileState extends State<AgentCardMobile>
                   ),
                   if (widget.agent.emoji != null) ...[
                     const SizedBox(width: 4),
-                    Text(widget.agent.emoji!, style: const TextStyle(fontSize: 16)),
+                    Text(widget.agent.emoji!,
+                        style: const TextStyle(fontSize: 16)),
                   ],
                 ],
               ),
@@ -140,20 +120,18 @@ class _AgentCardMobileState extends State<AgentCardMobile>
 
   Widget _buildAvatar() {
     final color = _getBehaviorColor();
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Center(
-        child: Text(
-          widget.agent.emoji ?? '🤖',
-          style: const TextStyle(fontSize: 24),
-        ),
-      ),
+    return PixelAgentAvatar(
+      seed: widget.agent.name,
+      emoji: widget.agent.emoji,
+      model: widget.agent.model,
+      kind: widget.agent.kind,
+      identityTheme: widget.agent.identityTheme,
+      isActive: widget.agent.isActive,
+      isSubagent: widget.agent.isSubagent,
+      status: widget.agent.agentStatus ?? widget.agent.statusSummary,
+      statusColor: color,
+      size: 48,
+      showEmojiBadge: true,
     );
   }
 
@@ -162,7 +140,7 @@ class _AgentCardMobileState extends State<AgentCardMobile>
       margin: const EdgeInsets.only(left: 8),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
+        color: color.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -240,9 +218,8 @@ class _AgentCardMobileState extends State<AgentCardMobile>
     }
 
     final usage = widget.agent.totalTokens;
-    final limit = widget.agent.contextTokens > 0
-        ? widget.agent.contextTokens
-        : 128000;
+    final limit =
+        widget.agent.contextTokens > 0 ? widget.agent.contextTokens : 128000;
     final percentage = (usage / limit * 100).clamp(0.0, 100.0);
     final color = _getTokenColor(percentage);
 
@@ -307,8 +284,10 @@ class _AgentCardMobileState extends State<AgentCardMobile>
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildUsageItem('Input', widget.agent.inputTokens, Colors.blue),
-              _buildUsageItem('Output', widget.agent.outputTokens, Colors.orange),
-              _buildUsageItem('Context', widget.agent.contextTokens, Colors.purple),
+              _buildUsageItem(
+                  'Output', widget.agent.outputTokens, Colors.orange),
+              _buildUsageItem(
+                  'Context', widget.agent.contextTokens, Colors.purple),
             ],
           ),
         ],
@@ -426,7 +405,7 @@ class _AgentCardMobileState extends State<AgentCardMobile>
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF00D4AA).withOpacity(0.2),
+                    color: const Color(0xFF00D4AA).withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.chat, color: Color(0xFF00D4AA)),
@@ -442,7 +421,7 @@ class _AgentCardMobileState extends State<AgentCardMobile>
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withOpacity(0.2),
+                    color: Colors.orange.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.refresh, color: Colors.orange),
@@ -458,7 +437,7 @@ class _AgentCardMobileState extends State<AgentCardMobile>
                 leading: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.2),
+                    color: Colors.blue.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Icon(Icons.edit, color: Colors.blue),
@@ -555,10 +534,10 @@ class StatusBadge extends StatelessWidget {
         vertical: compact ? 2 : 4,
       ),
       decoration: BoxDecoration(
-        color: style.color.withOpacity(0.2),
+        color: style.color.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(compact ? 4 : 6),
         border: Border.all(
-          color: style.color.withOpacity(0.3),
+          color: style.color.withValues(alpha: 0.3),
         ),
       ),
       child: Row(

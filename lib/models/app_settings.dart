@@ -98,7 +98,7 @@ class AppSettings {
     this.defaultShell = 'bash',
     this.developerMode = false,
     this.debugLogging = false,
-    this.appVersion = '3.0.6',
+    this.appVersion = '3.0.7',
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -149,7 +149,7 @@ class AppSettings {
       defaultShell: json['defaultShell'] as String? ?? 'bash',
       developerMode: json['developerMode'] as bool? ?? false,
       debugLogging: json['debugLogging'] as bool? ?? false,
-      appVersion: json['appVersion'] as String? ?? '3.0.6',
+      appVersion: json['appVersion'] as String? ?? '3.0.7',
     );
   }
 
