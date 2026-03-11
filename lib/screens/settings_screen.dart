@@ -313,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                       ),
                     ),
                     Text(
-                      'Version 3.0.3',
+                      'Version 3.0.4',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 16),
@@ -709,7 +709,7 @@ class _SettingsScreenState extends State<SettingsScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildAboutRow('Version', '3.0.3'),
+                  _buildAboutRow('Version', '3.0.4'),
                   const Divider(),
                   _buildAboutRow('Build', '20260311'),
                   const Divider(),

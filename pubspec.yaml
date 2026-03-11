@@ -1,7 +1,7 @@
 name: duckbot_go
 description: DuckBot Go - Mobile companion for DuckBot with inline generative UI
 publish_to: 'none'
-version: 3.0.3+303  # Product completion: Chat UX enhancements, connection diagnostics, system health improvements
+version: 3.0.4+304  # Integration release: chat lifecycle fixes, dashboard visualization, local metrics, docs/version cleanup
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

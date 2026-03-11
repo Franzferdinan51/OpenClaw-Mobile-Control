@@ -1,6 +1,6 @@
 # OpenClaw Mobile - Master Kanban Board
 
-**Last Updated:** March 10, 2026 03:21 EST  
+**Last Updated:** March 11, 2026 13:35 EST  
 **Total Tasks:** 150+  
 **Source Documents:** 8 research reports analyzed
 
@@ -46,6 +46,15 @@
 ---
 
 ## 🎉 PRODUCT COMPLETION PASS - March 11, 2026
+
+### v3.0.4 Integration / Release Candidate
+
+**Completed in integration pass:**
+- ✅ Preserved shared chat lifecycle across Search / Quick Actions / Dashboard navigation
+- ✅ Reduced gateway disconnect/reconnect spam with stronger reconnect guards and backoff
+- ✅ Added dashboard agent visualization components for mobile monitoring
+- ✅ Added local metrics service for local-install gateway/system data sourcing
+- ✅ Cleaned version string drift across app surfaces/docs for v3.0.4
 
 ### Chat UX & Connection Diagnostics Enhanced
 

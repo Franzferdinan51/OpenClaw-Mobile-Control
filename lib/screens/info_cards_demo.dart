@@ -42,7 +42,7 @@ class _InfoCardsDemoScreenState extends State<InfoCardsDemoScreen> {
           _buildSection('Status Cards', [
             GatewayStatusCard(
               isOnline: true,
-              version: '3.0.3',
+              version: '3.0.4',
               activeAgents: 5,
               totalSessions: 12,
               uptime: const Duration(hours: 24, minutes: 30),

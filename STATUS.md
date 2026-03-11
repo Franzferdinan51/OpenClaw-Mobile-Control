@@ -1,6 +1,6 @@
 # DuckBot Go - Current Status
 
-**Last Updated:** 2026-03-11 03:30 EDT  
+**Last Updated:** 2026-03-11 13:35 EDT  
 **Primary Project Path:** `/Users/duckets/Desktop/Android-App-DuckBot`  
 **Sync Copy:** `/Users/duckets/Desktop/DuckBot-Go-Project`
 
@@ -8,17 +8,17 @@
 
 ## ✅ Current State
 
-**Status:** ✅ PRODUCTION READY - v3.0.3 Released
+**Status:** ✅ RELEASE CANDIDATE - v3.0.4 integration pass
 
-### Verified in v3.0.3 pass
-- ✅ Enhanced chat UX with modern message bubbles
-- ✅ Connection diagnostics with detailed status display
-- ✅ Send button state management (disabled when disconnected)
-- ✅ Improved typing indicators and connection feedback
-- ✅ System health metrics verified working correctly
-- ✅ Termux detection and prerequisite checking (from v3.0.2)
-- ✅ Version bumped to `3.0.3+303`
-- ✅ Changelog and README updated
+### Verified in v3.0.4 pass
+- ✅ Chat lifecycle fixes preserve the shared chat connection across navigation
+- ✅ Search / Quick Actions / Dashboard no longer spawn replacement chat screens
+- ✅ Reconnect spam reduced with stronger backoff and guards
+- ✅ Dashboard upgraded with agent visualization and improved gateway status cards
+- ✅ Local metrics service added for local-install status sourcing
+- ✅ Termux detection and prerequisite checking retained from v3.0.2
+- ✅ Version bumped to `3.0.4+304`
+- ✅ README / changelog / in-app version strings aligned
 
 ---
 
@@ -86,17 +86,17 @@ flutter build apk --release           # ✅ Success (100.7MB)
 ## 📦 Release Info
 
 ### Current release
-- **Version:** `3.0.2+302`
-- **Type:** Production hardening
-- **APK:** `build/app/outputs/flutter-apk/app-release.apk` (100.7MB)
-- **Tag:** `v3.0.2`
+- **Version:** `3.0.4+304`
+- **Type:** Integrated stabilization + dashboard/agent-visualization release
+- **APK:** `build/app/outputs/flutter-apk/app-release.apk`
+- **Tag:** `v3.0.4`
 
 ### Key Features
-- ✅ Comprehensive Termux detection
-- ✅ Prerequisite validation
-- ✅ Enhanced installer UX
-- ✅ Clear error messages with fixes
-- ✅ Production-ready local installation
+- ✅ Preserved chat lifecycle across navigation-heavy flows
+- ✅ Reduced reconnect spam / disconnect noise
+- ✅ Dashboard agent visualization widgets
+- ✅ Local metrics service for local installs
+- ✅ Comprehensive Termux detection and installer readiness
 
 ---
 

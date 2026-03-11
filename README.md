@@ -1,13 +1,13 @@
 # DuckBot Go 🦆📱
 
-**Version:** 3.0.3  
+**Version:** 3.0.4  
 **Release Date:** March 11, 2026  
 **Status:** ✅ **PRODUCTION READY**  
 **Platform:** Android (Android 16+)  
 **APK Size:** ~100MB (release)  
 **Validation:** `flutter test` ✅ · `flutter build apk --debug` ✅ · `flutter build apk --release` ✅  
 **GitHub:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control  
-**Release:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.3
+**Release:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.4
 
 ---
 
@@ -15,8 +15,8 @@
 
 ### **Download APK**
 ```bash
-# Latest release (v3.0.1)
-wget https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/download/v3.0.1/app-release.apk
+# Latest release (v3.0.4)
+wget https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/download/v3.0.4/app-release.apk
 
 # Or build from source
 cd /Users/duckets/Desktop/Android-App-DuckBot
@@ -68,7 +68,7 @@ curl http://YOUR_IP:18789/health
 
 ---
 
-## ✨ Features (v3.0.1 Stabilization Release)
+## ✨ Features (v3.0.4 Integrated Release)
 
 ### 🎨 Inline Generative UI (ChatGPT-Style)
 
@@ -175,7 +175,7 @@ curl http://YOUR_IP:18789/health
 - OpenClaw gateway (for full functionality)
 
 ### **Via APK Download**
-1. Download `app-release.apk` from [releases](https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.1)
+1. Download `app-release.apk` from [releases](https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.4)
 2. Transfer to your Android device
 3. Enable "Install from Unknown Sources" in Settings
 4. Install the APK
@@ -289,22 +289,19 @@ DuckBot: "Here's your token usage:"
 
 ---
 
-## 🔮 Coming in v3.0.2
+## 🔮 Next Up (post-v3.0.4)
 
-### **Termux Integration**
-- ⏳ Local gateway hosting on Android device
-- ⏳ One-click Termux installation
-- ⏳ Battery status widget
-- ⏳ Location-based weather (auto-detect location)
-- ⏳ Device info display
-- ⏳ Clipboard integration
-- ⏳ Notifications from DuckBot
+### **Termux / Local Runtime Expansion**
+- ✅ Termux detection and prerequisite checks shipped
+- ⏳ Deeper local gateway metrics/reporting polish
+- ⏳ More one-tap dependency repair flows
+- ⏳ Battery / clipboard / notification integrations
 
-### **Agent Monitor Dashboard**
-- ⏳ Proper navigation integration
-- ⏳ Boss chat feature (global broadcast)
-- ⏳ Activity feed
-- ⏳ Pixel-art office visualization
+### **Agent Monitor Expansion**
+- ✅ Mobile agent visualization and monitor entry points shipped
+- ⏳ Boss chat / broadcast controls
+- ⏳ Richer activity feed
+- ⏳ More detailed pixel-art / office-style visualizations
 - ⏳ Agent achievements/leaderboard
 
 ### **Polish**
@@ -354,6 +351,6 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-**Download and enjoy DuckBot Go v3.0.1!** 🦆✨
+**Download and enjoy DuckBot Go v3.0.4!** 🦆✨
 
 **Last Updated:** March 10, 2026

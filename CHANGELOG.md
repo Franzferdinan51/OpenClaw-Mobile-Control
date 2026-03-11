@@ -5,6 +5,45 @@ All notable changes to DuckBot Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.4+304] - 2026-03-11
+
+### Added
+- **Agent visualization upgrades** on the dashboard
+  - New `AgentCardWidget` with visual status badges, avatars, model labels, and quick actions
+  - Enhanced `AgentVisualizationWidget` integration for mobile dashboard use
+- **Local metrics service** for local installs
+  - New `LocalMetricsService` to source gateway/system metrics from local HTTP/CLI paths when available
+  - Dashboard can label locally sourced metrics instead of only relying on remote gateway payloads
+
+### Changed
+- **Chat lifecycle and navigation**
+  - Search, Quick Actions, and Dashboard flows now preserve the existing chat instance instead of creating replacement chat screens
+  - Chat reconnect behavior now uses stronger guarded backoff to reduce disconnect/reconnect spam
+  - Chat UI keeps send/search concerns separate and preserves message state more safely
+- **Dashboard/home experience**
+  - Added richer gateway status presentation and mobile-friendly dashboard cards
+  - Added navigation improvements and clearer agent-monitor entry points
+- **Release consistency**
+  - Updated README, STATUS, in-app version strings, and release metadata to v3.0.4
+
+### Fixed
+- Persistent gateway disconnect noise after navigation-heavy flows
+- Chat lifecycle issues caused by disposing or replacing shared chat state
+- Search/send overlap caused by intrusive global search placement and cross-state UI confusion
+- Version string drift across app surfaces and docs
+
+### Technical
+- Updated: `lib/app.dart`
+- Updated: `lib/screens/chat_screen.dart`
+- Updated: `lib/screens/dashboard_screen.dart`
+- Updated: `lib/screens/global_search_screen.dart`
+- Updated: `lib/screens/quick_actions_screen.dart`
+- Updated: `lib/services/gateway_websocket_client.dart`
+- Added: `lib/services/local_metrics_service.dart`
+- Added: `lib/widgets/agent_card_widget.dart`
+- Updated: `lib/widgets/agent_visualization_widget.dart`
+- Added: `lib/widgets/gateway_status_card.dart`
+
 ## [3.0.3+303] - 2026-03-11
 
 ### Added

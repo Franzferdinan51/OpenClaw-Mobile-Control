@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import '../services/gateway_service.dart';
 import '../services/connection_monitor_service.dart';
+import '../services/local_metrics_service.dart';
 import '../models/gateway_status.dart';
 import '../widgets/connection_status_card.dart';
 import '../widgets/connection_status_icon.dart';
@@ -27,6 +28,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   GatewayService? _service;
   GatewayStatus? _status;
+  LocalMetrics? _localMetrics;
   bool _loading = true;
   String? _error;
   DateTime? _lastRefresh;
@@ -34,10 +36,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _gatewayName;
   ConnectionStatus _lastConnectionStatus = ConnectionStatus.disconnected;
   bool _hasShownLostNotification = false;
+  bool _isLocalInstall = false;
+  final LocalMetricsService _localMetricsService = LocalMetricsService();
 
   @override
   void initState() {
     super.initState();
+    _initializeLocalMetrics();
     _loadConfig();
     // Listen for connection status changes
     connectionMonitor.addListener(_onConnectionStatusChanged);
@@ -49,7 +54,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     _autoRefreshTimer?.cancel();
     connectionMonitor.removeListener(_onConnectionStatusChanged);
+    _localMetricsService.dispose();
     super.dispose();
+  }
+
+  Future<void> _initializeLocalMetrics() async {
+    try {
+      await _localMetricsService.initialize();
+    } catch (_) {
+      // Best-effort only; dashboard falls back to gateway status.
+    }
   }
 
   void _onConnectionStatusChanged() {
@@ -104,6 +118,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _loading = true;
       });
       
+      _checkLocalInstall();
+
       // Start connection monitoring
       connectionMonitor.startMonitoring(
         widget.gatewayService!,
@@ -124,6 +140,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _service = GatewayService(baseUrl: gatewayUrl, token: token);
       _loading = true;
     });
+
+    _localMetricsService.setGatewayUrl(gatewayUrl);
+    _checkLocalInstall();
     
     // Start connection monitoring
     connectionMonitor.startMonitoring(
@@ -132,6 +151,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     await _refreshStatus();
+  }
+
+  void _checkLocalInstall() {
+    final url = _service?.baseUrl ?? '';
+    _isLocalInstall = url.contains('localhost') ||
+        url.contains('127.0.0.1') ||
+        url.startsWith('http://192.168.') ||
+        url.startsWith('http://10.') ||
+        url.startsWith('http://172.');
   }
 
   Future<void> _refreshStatus() async {
@@ -143,8 +171,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
-      final status = await _service!.getStatus();
+      GatewayStatus? status;
+      LocalMetrics? localMetrics;
+
+      if (_isLocalInstall) {
+        try {
+          localMetrics = await _localMetricsService.getMetrics(forceRefresh: true);
+          if (localMetrics.isAvailable && localMetrics.gatewayStatus != null) {
+            status = localMetrics.gatewayStatus;
+          }
+        } catch (_) {
+          // Fall back to direct gateway fetch below.
+        }
+      }
+
+      status ??= await _service!.getStatus();
+
       setState(() {
+        _localMetrics = localMetrics;
         _status = status;
         _loading = false;
         _lastRefresh = DateTime.now();
@@ -202,6 +246,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
+                              if (_isLocalInstall && _localMetrics?.source != null) ...[
+                                Icon(Icons.memory, size: 14, color: Colors.grey[600]),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Local ${_localMetrics!.source}',
+                                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                ),
+                                const SizedBox(width: 10),
+                              ],
                               Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
                               const SizedBox(width: 4),
                               Text(

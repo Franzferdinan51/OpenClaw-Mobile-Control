@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../services/termux_service.dart';
 import '../services/gateway_service.dart';
 import 'termux_screen.dart';
-import 'chat_screen.dart';
 
 class QuickActionsScreen extends StatefulWidget {
   final bool showAdvanced;
