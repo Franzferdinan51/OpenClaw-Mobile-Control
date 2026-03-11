@@ -1,7 +1,7 @@
 /// Enhanced Gateway Status Card
-/// 
-/// Displays gateway health metrics with improved accuracy and visual design.
-/// Shows version, uptime, CPU, memory with proper handling of unavailable data.
+///
+/// Displays gateway overview metrics with improved accuracy and visual design.
+/// Shows version, uptime, and topology counts without duplicating home health data.
 
 import 'package:flutter/material.dart';
 import '../models/gateway_status.dart';
@@ -46,14 +46,14 @@ class GatewayStatusCard extends StatelessWidget {
                       Text(
                         'Gateway',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                              fontWeight: FontWeight.bold,
+                            ),
                       ),
                       Text(
                         status!.online ? 'Online' : 'Offline',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: status!.online ? Colors.green : Colors.red,
-                        ),
+                              color: status!.online ? Colors.green : Colors.red,
+                            ),
                       ),
                     ],
                   ),
@@ -67,7 +67,7 @@ class GatewayStatusCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            
+
             // Version and Uptime
             Row(
               children: [
@@ -93,32 +93,32 @@ class GatewayStatusCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            
-            // CPU Usage
-            _buildProgressBar(
-              context,
-              'CPU Usage',
-              status!.cpuPercent,
-              status!.cpuPercent != null ? '${status!.cpuPercent!.toStringAsFixed(1)}%' : 'Unavailable',
-              Colors.green,
-              Colors.orange,
-              Colors.red,
-              icon: Icons.memory,
+
+            // Agent and node counts
+            Row(
+              children: [
+                Expanded(
+                  child: _buildMetricCard(
+                    context,
+                    'Agents',
+                    '${status!.agents?.length ?? 0}',
+                    Icons.smart_toy_outlined,
+                    Colors.purple,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildMetricCard(
+                    context,
+                    'Nodes',
+                    '${status!.nodes?.length ?? 0}',
+                    Icons.devices_outlined,
+                    Colors.teal,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            
-            // Memory Usage
-            _buildProgressBar(
-              context,
-              'Memory',
-              status!.memoryPercent,
-              status!.formattedMemory ?? 'Unavailable',
-              Colors.green,
-              Colors.orange,
-              Colors.red,
-              icon: Icons.storage,
-            ),
-            
+
             // Last updated
             if (lastRefresh != null)
               Padding(
@@ -163,8 +163,8 @@ class GatewayStatusCard extends StatelessWidget {
             Text(
               'Gateway Status Unavailable',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
@@ -204,9 +204,9 @@ class GatewayStatusCard extends StatelessWidget {
               Text(
                 label,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w600,
-                ),
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ],
           ),
@@ -214,90 +214,13 @@ class GatewayStatusCard extends StatelessWidget {
           Text(
             value,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+                  fontWeight: FontWeight.bold,
+                ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildProgressBar(
-    BuildContext context,
-    String label,
-    double? percent,
-    String detail,
-    Color goodColor,
-    Color warnColor,
-    Color errorColor,
-    {IconData? icon}
-  ) {
-    final hasData = percent != null;
-    final clampedPercent = hasData ? percent!.clamp(0.0, 100.0) : 0.0;
-    
-    Color barColor;
-    if (!hasData) {
-      barColor = Colors.grey;
-    } else if (clampedPercent < 70) {
-      barColor = goodColor;
-    } else if (clampedPercent < 90) {
-      barColor = warnColor;
-    } else {
-      barColor = errorColor;
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                if (icon != null) ...[
-                  Icon(icon, size: 16, color: Colors.grey[700]),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  label,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            Text(
-              detail,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: barColor,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: hasData ? clampedPercent / 100 : 0,
-            backgroundColor: Colors.grey[300],
-            valueColor: AlwaysStoppedAnimation<Color>(barColor),
-            minHeight: 8,
-          ),
-        ),
-        if (!hasData) ...[
-          const SizedBox(height: 8),
-          Text(
-            'This gateway does not expose live metrics',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.grey[700],
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-        ],
-      ],
     );
   }
 

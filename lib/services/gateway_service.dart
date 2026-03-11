@@ -8,14 +8,14 @@ import '../models/autowork_config.dart';
 import '../models/chat_message.dart';
 
 /// Service for communicating with OpenClaw Gateway
-/// 
+///
 /// IMPLEMENTATION NOTES (from studying reference repos):
 /// - Gateway typically runs on localhost (127.0.0.1:18789) when on device
 /// - Or on local network (192.168.x.x:18789) when remote
 /// - Supports Tailscale IPs (100.x.x.x:18789)
 /// - All connections use HTTP (not HTTPS) for local networks
 /// - Timeout handling is critical for mobile networks
-/// 
+///
 /// OPENCLAW GATEWAY REST API ENDPOINTS:
 /// - GET /api/gateway - Gateway status, sessions, nodes
 /// - GET /api/status - Alternative status endpoint
@@ -25,7 +25,7 @@ import '../models/chat_message.dart';
 /// - POST /api/gateway/autowork - Update autowork config
 /// - PUT /api/gateway/autowork - Trigger autowork
 /// - GET /api/logs - Get gateway logs
-/// 
+///
 /// CONTROL ENDPOINTS (POST with confirm: true):
 /// - POST /api/mobile/control/gateway/restart - Restart gateway
 /// - POST /api/mobile/control/gateway/stop - Stop gateway
@@ -38,7 +38,7 @@ import '../models/chat_message.dart';
 class GatewayService {
   String baseUrl;
   String? token;
-  
+
   // Timeout configurations
   static const Duration _defaultTimeout = Duration(seconds: 15);
   static const Duration _shortTimeout = Duration(seconds: 5);
@@ -54,24 +54,25 @@ class GatewayService {
       };
 
   /// Validate and normalize gateway URL
-  /// 
+  ///
   /// Handles common URL issues:
   /// - Adds http:// if missing
   /// - Removes trailing slashes
   /// - Validates IP format
   static String? validateUrl(String url) {
     if (url.isEmpty) return null;
-    
+
     String normalized = url.trim();
-    
+
     // Add protocol if missing
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    if (!normalized.startsWith('http://') &&
+        !normalized.startsWith('https://')) {
       normalized = 'http://$normalized';
     }
-    
+
     // Remove trailing slash
     normalized = normalized.replaceAll(RegExp(r'/$'), '');
-    
+
     // Basic validation
     try {
       final uri = Uri.parse(normalized);
@@ -83,7 +84,7 @@ class GatewayService {
   }
 
   /// Get gateway status with timeout
-  /// 
+  ///
   /// Combines richer agent/session data from /api/gateway or /api/status
   /// with version/uptime/system fields from /health when available.
   Future<GatewayStatus?> getStatus({Duration? timeout}) async {
@@ -92,10 +93,12 @@ class GatewayService {
 
     // Try /api/gateway first
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/gateway'),
-        headers: _headers,
-      ).timeout(timeout ?? _shortTimeout);
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/api/gateway'),
+            headers: _headers,
+          )
+          .timeout(timeout ?? _shortTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -112,10 +115,12 @@ class GatewayService {
     // Fallback to /api/status if needed
     if (primaryStatus == null) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl/api/status'),
-          headers: _headers,
-        ).timeout(timeout ?? _shortTimeout);
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl/api/status'),
+              headers: _headers,
+            )
+            .timeout(timeout ?? _shortTimeout);
 
         if (response.statusCode == 200) {
           final json = jsonDecode(response.body);
@@ -132,10 +137,12 @@ class GatewayService {
 
     // Always try /health too because it often carries version/uptime/system metrics
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/health'),
-        headers: _headers,
-      ).timeout(timeout ?? _shortTimeout);
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/health'),
+            headers: _headers,
+          )
+          .timeout(timeout ?? _shortTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -154,8 +161,12 @@ class GatewayService {
     if (primaryStatus != null && healthStatus != null) {
       return GatewayStatus(
         online: primaryStatus.online || healthStatus.online,
-        version: primaryStatus.version != 'unknown' ? primaryStatus.version : healthStatus.version,
-        uptime: primaryStatus.uptime > 0 ? primaryStatus.uptime : healthStatus.uptime,
+        version: primaryStatus.version != 'unknown'
+            ? primaryStatus.version
+            : healthStatus.version,
+        uptime: primaryStatus.uptime > 0
+            ? primaryStatus.uptime
+            : healthStatus.uptime,
         cpuPercent: primaryStatus.cpuPercent ?? healthStatus.cpuPercent,
         memoryUsed: primaryStatus.memoryUsed ?? healthStatus.memoryUsed,
         memoryTotal: primaryStatus.memoryTotal ?? healthStatus.memoryTotal,
@@ -171,17 +182,19 @@ class GatewayService {
   }
 
   /// Check if gateway is reachable
-  /// 
+  ///
   /// Quick check for connectivity - tries all endpoints
   Future<bool> isReachable() async {
     final endpoints = ['/api/gateway', '/api/status', '/health'];
-    
+
     for (final endpoint in endpoints) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl$endpoint'),
-          headers: _headers,
-        ).timeout(const Duration(seconds: 3));
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl$endpoint'),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 3));
         if (response.statusCode == 200) {
           return true;
         }
@@ -193,7 +206,7 @@ class GatewayService {
   }
 
   /// Check if gateway is reachable with detailed error
-  /// 
+  ///
   /// Returns a map with success status and error message if failed
   Future<Map<String, dynamic>> checkConnection() async {
     final endpoints = [
@@ -201,23 +214,25 @@ class GatewayService {
       {'path': '/api/status', 'name': 'Status API'},
       {'path': '/health', 'name': 'Health Check'},
     ];
-    
+
     for (final endpoint in endpoints) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl${endpoint['path']}'),
-          headers: _headers,
-        ).timeout(const Duration(seconds: 5));
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl${endpoint['path']}'),
+              headers: _headers,
+            )
+            .timeout(const Duration(seconds: 5));
 
         if (response.statusCode == 200) {
           return {
-            'success': true, 
+            'success': true,
             'status': response.statusCode,
             'endpoint': endpoint['name'],
           };
         } else {
           return {
-            'success': false, 
+            'success': false,
             'error': 'HTTP ${response.statusCode}',
             'status': response.statusCode,
             'endpoint': endpoint['name'],
@@ -227,7 +242,7 @@ class GatewayService {
         // Try next endpoint
       } on SocketException catch (e) {
         return {
-          'success': false, 
+          'success': false,
           'error': 'Connection refused: ${e.message}',
           'endpoint': endpoint['name'],
         };
@@ -237,7 +252,7 @@ class GatewayService {
         // Try next endpoint
       }
     }
-    
+
     return {'success': false, 'error': 'All endpoints failed'};
   }
 
@@ -249,14 +264,21 @@ class GatewayService {
   Future<List<AgentSession>?> getAgents() async {
     try {
       // Try Agent Monitor API first (runs on port 3001 typically)
-      var response = await http.get(
-        Uri.parse('$baseUrl/api/gateway'),
-        headers: _headers,
-      ).timeout(const Duration(seconds: 10));
+      var response = await http
+          .get(
+            Uri.parse('$baseUrl/api/gateway'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final sessions = json['sessions'] as List? ?? [];
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final result = json['result'] as Map<String, dynamic>?;
+        final sessions = (json['sessions'] as List?) ??
+            (json['agents'] as List?) ??
+            result?['sessions'] as List? ??
+            result?['agents'] as List? ??
+            [];
         return sessions.map((s) => AgentSession.fromJson(s)).toList();
       }
     } catch (e) {
@@ -269,22 +291,34 @@ class GatewayService {
   /// Get agent statistics (total, active, tokens, etc.)
   Future<Map<String, dynamic>?> getAgentStats() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/gateway'),
-        headers: _headers,
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/api/gateway'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final sessions = json['sessions'] as List? ?? [];
-        
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final result = json['result'] as Map<String, dynamic>?;
+        final sessions = (json['sessions'] as List?) ??
+            (json['agents'] as List?) ??
+            result?['sessions'] as List? ??
+            result?['agents'] as List? ??
+            [];
+
         int totalAgents = sessions.length;
-        int activeAgents = sessions.where((s) => s['isActive'] == true).length;
+        int activeAgents = sessions.where((s) {
+          final session = s as Map<String, dynamic>;
+          return session['isActive'] == true || session['status'] == 'active';
+        }).length;
         int totalTokens = 0;
         for (var s in sessions) {
-          totalTokens += (s['totalTokens'] ?? 0) as int;
+          final session = s as Map<String, dynamic>;
+          totalTokens +=
+              (session['totalTokens'] ?? session['total_tokens'] ?? 0) as int;
         }
-        
+
         return {
           'totalAgents': totalAgents,
           'activeAgents': activeAgents,
@@ -305,17 +339,22 @@ class GatewayService {
   /// Send a message to a specific agent session
   Future<bool> sendAgentMessage(String sessionKey, String message) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/gateway/action'),
-        headers: _headers,
-        body: jsonEncode({
-          'action': 'send',
-          'sessionKey': sessionKey,
-          'message': message,
-        }),
-      ).timeout(const Duration(seconds: 15));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/gateway/action'),
+            headers: _headers,
+            body: jsonEncode({
+              'action': 'send',
+              'sessionKey': sessionKey,
+              'message': message,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
 
-      return response.statusCode == 200 && jsonDecode(response.body)['ok'] == true;
+      if (response.statusCode != 200) return false;
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      return json['ok'] == true || json['success'] == true;
     } catch (e) {
       print('Error sending agent message: $e');
       return false;
@@ -327,23 +366,27 @@ class GatewayService {
     try {
       // Get all agent sessions first
       final agents = await getAgents();
-      if (agents == null || agents.isEmpty) return {'ok': false, 'error': 'No agents found'};
+      if (agents == null || agents.isEmpty)
+        return {'ok': false, 'error': 'No agents found'};
 
       // Filter for main agents (not subagents)
       final mainAgents = agents.where((a) => !a.isSubagent).toList();
       final sessionKeys = mainAgents.map((a) => a.key).toList();
 
-      if (sessionKeys.isEmpty) return {'ok': false, 'error': 'No main agents found'};
+      if (sessionKeys.isEmpty)
+        return {'ok': false, 'error': 'No main agents found'};
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/gateway/action'),
-        headers: _headers,
-        body: jsonEncode({
-          'action': 'broadcast',
-          'sessionKeys': sessionKeys,
-          'message': message,
-        }),
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/gateway/action'),
+            headers: _headers,
+            body: jsonEncode({
+              'action': 'broadcast',
+              'sessionKeys': sessionKeys,
+              'message': message,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
       return jsonDecode(response.body);
     } catch (e) {
@@ -353,25 +396,30 @@ class GatewayService {
   }
 
   /// Get chat history for a specific agent
-  Future<List<ChatMessage>?> getChatHistory(String sessionKey, {int limit = 20}) async {
+  Future<List<ChatMessage>?> getChatHistory(String sessionKey,
+      {int limit = 20}) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/gateway/action'),
-        headers: _headers,
-        body: jsonEncode({
-          'action': 'history',
-          'sessionKey': sessionKey,
-          'limit': limit,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/gateway/action'),
+            headers: _headers,
+            body: jsonEncode({
+              'action': 'history',
+              'sessionKey': sessionKey,
+              'limit': limit,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
         final result = json['result'] as Map<String, dynamic>?;
-        if (result != null && result['messages'] != null) {
-          return (result['messages'] as List)
-              .map((m) => ChatMessage.fromJson(m))
-              .toList();
+        final messages = (result != null && result['messages'] is List)
+            ? result!['messages'] as List
+            : (json['messages'] as List?) ?? (json['history'] as List?) ?? [];
+
+        if (messages.isNotEmpty) {
+          return messages.map((m) => ChatMessage.fromJson(m)).toList();
         }
       }
     } catch (e) {
@@ -387,10 +435,12 @@ class GatewayService {
   /// Get autowork configuration and targets
   Future<AutoworkConfig?> getAutoworkConfig() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/gateway/autowork'),
-        headers: _headers,
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/api/gateway/autowork'),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -422,11 +472,13 @@ class GatewayService {
       if (maxSendsPerTick != null) body['maxSendsPerTick'] = maxSendsPerTick;
       if (defaultDirective != null) body['defaultDirective'] = defaultDirective;
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/api/gateway/autowork'),
-        headers: _headers,
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/api/gateway/autowork'),
+            headers: _headers,
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -446,11 +498,13 @@ class GatewayService {
       final body = <String, dynamic>{};
       if (sessionKey != null) body['sessionKey'] = sessionKey;
 
-      final response = await http.put(
-        Uri.parse('$baseUrl/api/gateway/autowork'),
-        headers: _headers,
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .put(
+            Uri.parse('$baseUrl/api/gateway/autowork'),
+            headers: _headers,
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -462,15 +516,17 @@ class GatewayService {
   }
 
   /// Get logs from the gateway
-  Future<dynamic> getLogs({int limit = 100, String? level, String? source}) async {
+  Future<dynamic> getLogs(
+      {int limit = 100, String? level, String? source}) async {
     try {
       final queryParams = <String, String>{
         'limit': limit.toString(),
         if (level != null) 'level': level,
         if (source != null) 'source': source,
       };
-      
-      final uri = Uri.parse('$baseUrl/api/logs').replace(queryParameters: queryParams);
+
+      final uri =
+          Uri.parse('$baseUrl/api/logs').replace(queryParameters: queryParams);
       final response = await http.get(uri, headers: _headers);
 
       if (response.statusCode == 200) {
@@ -541,7 +597,8 @@ class GatewayService {
     return _postControl('/api/mobile/control/cron/$cronName/run', {});
   }
 
-  Future<Map<String, dynamic>?> toggleCron(String cronName, bool enabled) async {
+  Future<Map<String, dynamic>?> toggleCron(
+      String cronName, bool enabled) async {
     return _postControl('/api/mobile/control/cron/$cronName/toggle', {
       'enabled': enabled,
     });
@@ -560,13 +617,16 @@ class GatewayService {
   }
 
   // Helper for control endpoints
-  Future<Map<String, dynamic>?> _postControl(String endpoint, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>?> _postControl(
+      String endpoint, Map<String, dynamic> body) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: _headers,
-        body: jsonEncode(body),
-      ).timeout(_defaultTimeout);
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl$endpoint'),
+            headers: _headers,
+            body: jsonEncode(body),
+          )
+          .timeout(_defaultTimeout);
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);

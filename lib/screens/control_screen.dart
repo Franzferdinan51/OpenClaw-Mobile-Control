@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/gateway_service.dart';
 import '../models/gateway_status.dart';
 
 class ControlScreen extends StatefulWidget {
   final bool showAdvanced;
+  final GatewayService? gatewayService;
 
-  const ControlScreen({super.key, this.showAdvanced = false});
+  const ControlScreen({
+    super.key,
+    this.showAdvanced = false,
+    this.gatewayService,
+  });
 
   @override
   State<ControlScreen> createState() => _ControlScreenState();
@@ -19,7 +23,7 @@ class _ControlScreenState extends State<ControlScreen> {
   GatewayStatus? _status;
   bool _loading = true;
   String? _error;
-  
+
   // Hold to pause state
   double _holdProgress = 0.0;
   bool _isHolding = false;
@@ -31,9 +35,33 @@ class _ControlScreenState extends State<ControlScreen> {
     _loadConfig();
   }
 
+  @override
+  void didUpdateWidget(covariant ControlScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final gatewayChanged =
+        oldWidget.gatewayService?.baseUrl != widget.gatewayService?.baseUrl ||
+            oldWidget.gatewayService?.token != widget.gatewayService?.token;
+
+    if (gatewayChanged) {
+      unawaited(_loadConfig());
+    }
+  }
+
   Future<void> _loadConfig() async {
+    if (widget.gatewayService != null) {
+      setState(() {
+        _service = widget.gatewayService;
+        _loading = true;
+      });
+
+      await _refreshStatus();
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
-    final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
+    final gatewayUrl =
+        prefs.getString('gateway_url') ?? 'http://localhost:18789';
     final token = prefs.getString('gateway_token');
 
     setState(() {
@@ -77,7 +105,9 @@ class _ControlScreenState extends State<ControlScreen> {
   }
 
   Future<bool?> _showConfirmDialog(String title, String message) {
-    final isDangerous = title.contains('Stop') || title.contains('Kill') || title.contains('Pause');
+    final isDangerous = title.contains('Stop') ||
+        title.contains('Kill') ||
+        title.contains('Pause');
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -108,7 +138,8 @@ class _ControlScreenState extends State<ControlScreen> {
     );
     if (confirm != true) return;
 
-    final result = await _service?.restartGateway('Manual restart from mobile app');
+    final result =
+        await _service?.restartGateway('Manual restart from mobile app');
     if (result != null && result['success'] == true) {
       _showToast('Gateway restarting...');
       await Future.delayed(const Duration(seconds: 2));
@@ -237,11 +268,14 @@ class _ControlScreenState extends State<ControlScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                      const Icon(Icons.error_outline,
+                          size: 64, color: Colors.red),
                       const SizedBox(height: 16),
-                      Text('Connection Error', style: Theme.of(context).textTheme.headlineSmall),
+                      Text('Connection Error',
+                          style: Theme.of(context).textTheme.headlineSmall),
                       const SizedBox(height: 8),
-                      Text(_error!, style: Theme.of(context).textTheme.bodyMedium),
+                      Text(_error!,
+                          style: Theme.of(context).textTheme.bodyMedium),
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: _refreshStatus,
@@ -281,7 +315,8 @@ class _ControlScreenState extends State<ControlScreen> {
               children: [
                 const Icon(Icons.dns),
                 const SizedBox(width: 8),
-                Text('Gateway Controls', style: Theme.of(context).textTheme.titleLarge),
+                Text('Gateway Controls',
+                    style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
             const SizedBox(height: 16),
@@ -294,7 +329,9 @@ class _ControlScreenState extends State<ControlScreen> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  _status?.online ?? false ? 'Gateway Online' : 'Gateway Offline',
+                  _status?.online ?? false
+                      ? 'Gateway Online'
+                      : 'Gateway Offline',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
@@ -342,7 +379,8 @@ class _ControlScreenState extends State<ControlScreen> {
               children: [
                 const Icon(Icons.people),
                 const SizedBox(width: 8),
-                Text('Agents (${agents.length})', style: Theme.of(context).textTheme.titleLarge),
+                Text('Agents (${agents.length})',
+                    style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
             const SizedBox(height: 16),
@@ -351,8 +389,11 @@ class _ControlScreenState extends State<ControlScreen> {
             else
               ...agents.map((agent) => ListTile(
                     leading: Icon(
-                      agent.status == 'active' ? Icons.play_circle : Icons.pause_circle,
-                      color: agent.status == 'active' ? Colors.green : Colors.grey,
+                      agent.status == 'active'
+                          ? Icons.play_circle
+                          : Icons.pause_circle,
+                      color:
+                          agent.status == 'active' ? Colors.green : Colors.grey,
                     ),
                     title: Text(agent.name),
                     subtitle: Text(agent.currentTask ?? agent.status),
@@ -367,7 +408,8 @@ class _ControlScreenState extends State<ControlScreen> {
                           tooltip: 'View Session',
                         ),
                         IconButton(
-                          icon: const Icon(Icons.close, size: 20, color: Colors.red),
+                          icon: const Icon(Icons.close,
+                              size: 20, color: Colors.red),
                           onPressed: () => _killAgent(agent),
                           tooltip: 'Kill Agent',
                         ),
@@ -392,7 +434,8 @@ class _ControlScreenState extends State<ControlScreen> {
               children: [
                 const Icon(Icons.devices),
                 const SizedBox(width: 8),
-                Text('Nodes (${nodes.length})', style: Theme.of(context).textTheme.titleLarge),
+                Text('Nodes (${nodes.length})',
+                    style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
             const SizedBox(height: 16),
@@ -401,11 +444,16 @@ class _ControlScreenState extends State<ControlScreen> {
             else
               ...nodes.map((node) => ListTile(
                     leading: Icon(
-                      node.status == 'connected' ? Icons.check_circle : Icons.error,
-                      color: node.status == 'connected' ? Colors.green : Colors.orange,
+                      node.status == 'connected'
+                          ? Icons.check_circle
+                          : Icons.error,
+                      color: node.status == 'connected'
+                          ? Colors.green
+                          : Colors.orange,
                     ),
                     title: Text(node.name),
-                    subtitle: Text('${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}'),
+                    subtitle: Text(
+                        '${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}'),
                     trailing: node.status != 'connected'
                         ? IconButton(
                             icon: const Icon(Icons.refresh),
@@ -432,7 +480,8 @@ class _ControlScreenState extends State<ControlScreen> {
               children: [
                 const Icon(Icons.schedule),
                 const SizedBox(width: 8),
-                Text('Cron Tasks (${crons.length})', style: Theme.of(context).textTheme.titleLarge),
+                Text('Cron Tasks (${crons.length})',
+                    style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
             const SizedBox(height: 16),
@@ -445,7 +494,8 @@ class _ControlScreenState extends State<ControlScreen> {
                       color: cron.enabled ? Colors.green : Colors.grey,
                     ),
                     title: Text(cron.name),
-                    subtitle: Text('${cron.schedule} • ${cron.status ?? 'unknown'}'),
+                    subtitle:
+                        Text('${cron.schedule} • ${cron.status ?? 'unknown'}'),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -469,7 +519,7 @@ class _ControlScreenState extends State<ControlScreen> {
 
   Widget _buildEmergencyControls() {
     final isPaused = _status?.isPaused ?? false;
-    
+
     return Card(
       color: Colors.red.shade900.withOpacity(0.3),
       child: Padding(
@@ -483,7 +533,10 @@ class _ControlScreenState extends State<ControlScreen> {
                 const SizedBox(width: 8),
                 Text(
                   'Emergency Controls',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.red),
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(color: Colors.red),
                 ),
               ],
             ),
@@ -536,7 +589,8 @@ class _ControlScreenState extends State<ControlScreen> {
                       });
                       // Start timer to increment progress
                       _holdTimer?.cancel();
-                      _holdTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+                      _holdTimer = Timer.periodic(
+                          const Duration(milliseconds: 100), (timer) {
                         if (_isHolding && _holdProgress < 1.0) {
                           setState(() {
                             _holdProgress += 0.033; // ~3 seconds to complete
@@ -568,7 +622,8 @@ class _ControlScreenState extends State<ControlScreen> {
                         color: Colors.red,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: _isHolding ? Colors.white : Colors.red.shade300,
+                          color:
+                              _isHolding ? Colors.white : Colors.red.shade300,
                           width: 3,
                         ),
                       ),

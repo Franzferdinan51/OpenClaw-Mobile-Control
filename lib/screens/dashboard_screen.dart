@@ -15,11 +15,19 @@ import 'logs_screen.dart';
 import 'chat_screen.dart';
 import 'termux_screen.dart';
 import 'agent_monitor_screen.dart';
+import 'local_installer_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final GatewayService? gatewayService;
+  final VoidCallback? onGatewayChanged;
+  final VoidCallback? onOpenChat;
 
-  const DashboardScreen({super.key, this.gatewayService});
+  const DashboardScreen({
+    super.key,
+    this.gatewayService,
+    this.onGatewayChanged,
+    this.onOpenChat,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -29,6 +37,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   GatewayService? _service;
   GatewayStatus? _status;
   LocalMetrics? _localMetrics;
+  LocalRuntimeStatus? _runtimeStatus;
   bool _loading = true;
   String? _error;
   DateTime? _lastRefresh;
@@ -47,7 +56,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Listen for connection status changes
     connectionMonitor.addListener(_onConnectionStatusChanged);
     // Auto-refresh every 30 seconds
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refreshStatus());
+    _autoRefreshTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) => _refreshStatus());
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final gatewayChanged =
+        oldWidget.gatewayService?.baseUrl != widget.gatewayService?.baseUrl ||
+            oldWidget.gatewayService?.token != widget.gatewayService?.token;
+
+    if (gatewayChanged) {
+      unawaited(_loadConfig());
+    }
   }
 
   @override
@@ -68,10 +91,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _onConnectionStatusChanged() {
     final state = connectionMonitor.state;
-    
+
     // Show SnackBar when connection is lost (only once per disconnection)
     if (state.isDisconnected || state.hasError) {
-      if (_lastConnectionStatus == ConnectionStatus.connected && !_hasShownLostNotification) {
+      if (_lastConnectionStatus == ConnectionStatus.connected &&
+          !_hasShownLostNotification) {
         _hasShownLostNotification = true;
         _showConnectionLostNotification(state.errorMessage);
       }
@@ -79,13 +103,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Reset notification flag when reconnected
       _hasShownLostNotification = false;
     }
-    
+
     _lastConnectionStatus = state.status;
   }
 
   void _showConnectionLostNotification(String? error) {
     if (!mounted) return;
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -111,13 +135,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    _gatewayName = prefs.getString('gateway_name');
+
     // Use passed service or create new one from stored settings
     if (widget.gatewayService != null) {
       setState(() {
         _service = widget.gatewayService;
         _loading = true;
       });
-      
+
+      _localMetricsService.setGatewayUrl(widget.gatewayService!.baseUrl);
       _checkLocalInstall();
 
       // Start connection monitoring
@@ -125,14 +153,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         widget.gatewayService!,
         gatewayName: _gatewayName,
       );
-      
+
       await _refreshStatus();
       return;
     }
 
     // Fallback to loading from preferences
-    final prefs = await SharedPreferences.getInstance();
-    final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
+    final gatewayUrl =
+        prefs.getString('gateway_url') ?? 'http://localhost:18789';
     final token = prefs.getString('gateway_token');
     _gatewayName = prefs.getString('gateway_name');
 
@@ -143,7 +171,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     _localMetricsService.setGatewayUrl(gatewayUrl);
     _checkLocalInstall();
-    
+
     // Start connection monitoring
     connectionMonitor.startMonitoring(
       _service!,
@@ -173,10 +201,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       GatewayStatus? status;
       LocalMetrics? localMetrics;
+      LocalRuntimeStatus? runtimeStatus;
 
       if (_isLocalInstall) {
         try {
-          localMetrics = await _localMetricsService.getMetrics(forceRefresh: true);
+          final results = await Future.wait<dynamic>([
+            _localMetricsService.getMetrics(forceRefresh: true),
+            _localMetricsService.getRuntimeStatus(),
+          ]);
+
+          localMetrics = results[0] as LocalMetrics;
+          runtimeStatus = results[1] as LocalRuntimeStatus;
+
           if (localMetrics.isAvailable && localMetrics.gatewayStatus != null) {
             status = localMetrics.gatewayStatus;
           }
@@ -189,6 +225,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() {
         _localMetrics = localMetrics;
+        _runtimeStatus = runtimeStatus;
         _status = status;
         _loading = false;
         _lastRefresh = DateTime.now();
@@ -238,7 +275,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         onRetry: _refreshStatus,
                       ),
                       const SizedBox(height: 16),
-                      
+
                       // Last refresh indicator
                       if (_lastRefresh != null)
                         Padding(
@@ -246,29 +283,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              if (_isLocalInstall && _localMetrics?.source != null) ...[
-                                Icon(Icons.memory, size: 14, color: Colors.grey[600]),
+                              if (_isLocalInstall &&
+                                  _localMetrics?.source != null) ...[
+                                Icon(Icons.memory,
+                                    size: 14, color: Colors.grey[600]),
                                 const SizedBox(width: 4),
                                 Text(
                                   'Local ${_localMetrics!.source}',
-                                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 12),
                                 ),
                                 const SizedBox(width: 10),
                               ],
-                              Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                              Icon(Icons.access_time,
+                                  size: 14, color: Colors.grey[600]),
                               const SizedBox(width: 4),
                               Text(
                                 'Updated ${_getTimeAgo(_lastRefresh!)}',
-                                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12),
                               ),
                             ],
                           ),
                         ),
-                      
+
                       // Quick Stats Row
                       _buildQuickStatsRow(),
                       const SizedBox(height: 16),
-                      
+
                       // Enhanced Gateway Status Card
                       GatewayStatusCard(
                         status: _status,
@@ -276,11 +318,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         onRefresh: _refreshStatus,
                       ),
                       const SizedBox(height: 16),
-                      
+
                       // System Health
                       _buildSystemHealthCard(),
                       const SizedBox(height: 16),
-                      
+
+                      if (_isLocalInstall) ...[
+                        _buildLocalRuntimeCard(),
+                        const SizedBox(height: 16),
+                      ],
+
                       // Agent Visualization
                       AgentVisualizationWidget(
                         gatewayService: _service,
@@ -291,7 +338,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       const SizedBox(height: 16),
                       _buildNodesCard(),
                       const SizedBox(height: 16),
-                      
+
                       // Quick Actions
                       _buildQuickActionsCard(),
                     ],
@@ -317,67 +364,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Nodes (${nodes.length})', style: Theme.of(context).textTheme.titleLarge),
+            Text('Nodes (${nodes.length})',
+                style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             if (nodes.isEmpty)
               const Text('No nodes connected')
             else
               ...nodes.map((node) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      node.status == 'connected' ? Icons.check_circle : Icons.error,
-                      color: node.status == 'connected' ? Colors.green : Colors.red,
-                      size: 20,
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          node.status == 'connected'
+                              ? Icons.check_circle
+                              : Icons.error,
+                          color: node.status == 'connected'
+                              ? Colors.green
+                              : Colors.red,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(node.name,
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
+                              Text(
+                                  '${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}',
+                                  style: Theme.of(context).textTheme.bodySmall),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(node.name, style: Theme.of(context).textTheme.titleMedium),
-                          Text('${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}', 
-                               style: Theme.of(context).textTheme.bodySmall),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              )),
+                  )),
           ],
         ),
       ),
     );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          Text(value, style: Theme.of(context).textTheme.titleMedium),
-        ],
-      ),
-    );
-  }
-
-  String _formatUptime(int seconds) {
-    if (seconds <= 0) return 'Unavailable';
-
-    final days = seconds ~/ 86400;
-    final hours = (seconds % 86400) ~/ 3600;
-    final minutes = (seconds % 3600) ~/ 60;
-
-    if (days > 0) {
-      return '${days}d ${hours}h ${minutes}m';
-    }
-    if (hours > 0) {
-      return '${hours}h ${minutes}m';
-    }
-    return '${minutes}m';
   }
 
   /// Build connection prompt when no gateway is connected
@@ -402,27 +428,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const SizedBox(height: 32),
-            
+
             // Title
             Text(
               'Welcome to OpenClaw Mobile!',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+                    fontWeight: FontWeight.bold,
+                  ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            
+
             // Description
             Text(
               'Get started by connecting to your OpenClaw gateway. Choose one of the options below:',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-              ),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.7),
+                  ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 40),
-            
+
             // Option 1: Install Locally
             Card(
               elevation: 4,
@@ -454,16 +483,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               children: [
                                 Text(
                                   'Install on This Phone',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Install OpenClaw locally via Termux',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.7),
+                                      ),
                                 ),
                               ],
                             ),
@@ -486,9 +524,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           children: [
                             Text(
                               '✨ Best for:',
-                              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                             ),
                             const SizedBox(height: 4),
                             Text(
@@ -504,7 +545,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            
+
             // Option 2: Connect to Remote - Single entry point
             Card(
               elevation: 4,
@@ -536,16 +577,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               children: [
                                 Text(
                                   'Connect to Remote Gateway',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Connect to OpenClaw on another device',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withOpacity(0.7),
+                                      ),
                                 ),
                               ],
                             ),
@@ -568,9 +618,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           children: [
                             Text(
                               '✨ Best for:',
-                              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                             ),
                             const SizedBox(height: 4),
                             Text(
@@ -586,7 +639,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            
+
             // Quick actions - Single Connect button
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -656,7 +709,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline, color: Colors.amber, size: 20),
+                    const Icon(Icons.info_outline,
+                        color: Colors.amber, size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -700,87 +754,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         builder: (context) => ConnectGatewayScreen(
           onConnected: () {
             _loadConfig();
+            widget.onGatewayChanged?.call();
           },
         ),
-      ),
-    );
-  }
-
-  /// Show dialog for connecting to remote gateway - Simplified to single entry point
-  void _showConnectRemoteDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.cloud, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('Connect to Gateway'),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Connect to an OpenClaw gateway running on another device.',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              _buildConnectionOption(
-                'Find Gateway',
-                'Auto-discover via LAN or Tailscale',
-                Icons.wifi_find,
-                () {
-                  Navigator.pop(context);
-                  _navigateToConnectGateway(context);
-                },
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '💡 Tip:',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Auto-discovery will scan your network and Tailscale for available gateways.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const SettingsScreen()),
-              );
-            },
-            icon: const Icon(Icons.search),
-            label: const Text('Find Gateways'),
-          ),
-        ],
       ),
     );
   }
@@ -822,46 +798,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildConnectionOption(String title, String description, IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.blue),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    description,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildQuickStatsRow() {
     final agentCount = _status?.agents?.length ?? 0;
     final nodeCount = _status?.nodes?.length ?? 0;
     final isPaused = _status?.isPaused ?? false;
-    
+
     return Row(
       children: [
         Expanded(
@@ -894,7 +835,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildQuickStatCard(String label, String value, IconData icon, Color color) {
+  Widget _buildQuickStatCard(
+      String label, String value, IconData icon, Color color) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -905,9 +847,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text(
               value,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
             ),
             Text(
               label,
@@ -920,9 +862,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildSystemHealthCard() {
-    final cpuPercent = _status?.cpuPercent;
-    final memoryPercent = _status?.memoryPercent;
+    final localSystem = _localMetrics?.systemMetrics;
+    final cpuPercent = localSystem?.cpuPercent ?? _status?.cpuPercent;
+    final memoryPercent = localSystem?.memoryPercent ?? _status?.memoryPercent;
+    final memoryDetail =
+        localSystem?.formattedMemory ?? _status?.formattedMemory;
     final hasAnySystemMetrics = cpuPercent != null || memoryPercent != null;
+    final metricsSource = _localMetrics?.source ?? 'gateway';
+    final fetchedAt = _localMetrics?.fetchedAt;
+    final metricsAge =
+        fetchedAt != null ? DateTime.now().difference(fetchedAt) : null;
+    final isStale =
+        metricsAge != null && metricsAge > const Duration(seconds: 45);
 
     return Card(
       child: Padding(
@@ -932,32 +883,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.health_and_safety, color: Theme.of(context).colorScheme.primary),
+                Icon(Icons.health_and_safety,
+                    color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
                 Text(
                   'System Health',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+            if (_localMetrics != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildMetaChip(Icons.memory, 'Source: $metricsSource'),
+                    if (fetchedAt != null)
+                      _buildMetaChip(
+                        Icons.schedule,
+                        'Sampled ${_getTimeAgo(fetchedAt)}',
+                      ),
+                    if (_localMetrics!.fetchDuration > Duration.zero)
+                      _buildMetaChip(
+                        Icons.speed,
+                        '${_localMetrics!.fetchDuration.inMilliseconds}ms',
+                      ),
+                    if (isStale)
+                      _buildMetaChip(
+                        Icons.warning_amber_rounded,
+                        'Stale',
+                        foreground: Colors.orange.shade800,
+                        background: Colors.orange.shade100,
+                      ),
+                  ],
+                ),
+              ),
             if (cpuPercent != null)
-              _buildHealthIndicator('CPU Usage', cpuPercent, Colors.green, Colors.orange, Colors.red)
+              _buildHealthIndicator('CPU Usage', cpuPercent, Colors.green,
+                  Colors.orange, Colors.red)
             else
               _buildUnavailableHealthIndicator('CPU Usage'),
             const SizedBox(height: 12),
             if (memoryPercent != null)
-              _buildHealthIndicator('Memory', memoryPercent, Colors.green, Colors.orange, Colors.red,
-                  detail: _status?.formattedMemory)
+              _buildHealthIndicator('Memory', memoryPercent, Colors.green,
+                  Colors.orange, Colors.red,
+                  detail: memoryDetail)
             else
-              _buildUnavailableHealthIndicator('Memory', detail: _status?.formattedMemory),
+              _buildUnavailableHealthIndicator('Memory', detail: memoryDetail),
             if (!hasAnySystemMetrics) ...[
               const SizedBox(height: 12),
               Text(
                 'This gateway is not currently exposing live CPU/memory stats, so the dashboard will show them as unavailable instead of fake 0% values.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey[700]),
               ),
             ],
           ],
@@ -966,10 +951,208 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildHealthIndicator(String label, double percent, Color good, Color warn, Color error, {String? detail}) {
+  Widget _buildMetaChip(
+    IconData icon,
+    String label, {
+    Color? foreground,
+    Color? background,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color:
+            background ?? Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: foreground ?? Colors.grey[700]),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: foreground ?? Colors.grey[800],
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocalRuntimeCard() {
+    final runtime = _runtimeStatus;
+    if (!_isLocalInstall || runtime == null) {
+      return const SizedBox.shrink();
+    }
+
+    final readiness = runtime.readiness;
+    final blockingCount = readiness?.blockingIssues.length ?? 0;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.developer_mode,
+                    color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Local Runtime',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ),
+                Text(
+                  'Checked ${_getTimeAgo(runtime.checkedAt)}',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Colors.grey[700]),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _buildRuntimeStatusRow(
+              'Gateway',
+              runtime.gatewayRunning,
+              detail: runtime.gatewayLatencyMs != null
+                  ? '${runtime.gatewayLatencyMs}ms'
+                  : runtime.gatewayError ?? 'Unavailable',
+            ),
+            const SizedBox(height: 8),
+            _buildRuntimeStatusRow(
+              'Metrics Helper',
+              runtime.helperRunning,
+              detail: runtime.helperLatencyMs != null
+                  ? '${runtime.helperLatencyMs}ms'
+                  : runtime.helperError ?? 'Not running',
+            ),
+            const SizedBox(height: 8),
+            _buildRuntimeStatusRow(
+              'Termux',
+              runtime.termuxInstalled,
+              detail: runtime.termuxInstalled
+                  ? (runtime.termuxApiInstalled
+                      ? 'API installed'
+                      : 'API missing')
+                  : 'Install from F-Droid or GitHub',
+            ),
+            const SizedBox(height: 8),
+            _buildRuntimeStatusRow(
+              'RUN_COMMAND',
+              runtime.runCommandPermissionGranted,
+              detail: runtime.runCommandPermissionGranted
+                  ? 'Granted'
+                  : 'Grant in app settings',
+            ),
+            if (readiness != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: blockingCount == 0
+                      ? Colors.green.withValues(alpha: 0.08)
+                      : Colors.orange.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  readiness.readinessText,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: blockingCount == 0
+                            ? Colors.green.shade700
+                            : Colors.orange.shade800,
+                      ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const LocalInstallerScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.build_circle_outlined),
+                    label: Text(blockingCount == 0 ? 'Manage' : 'Repair'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const TermuxScreen(),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.terminal),
+                    label: const Text('Termux'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRuntimeStatusRow(String label, bool isHealthy,
+      {String? detail}) {
+    final color = isHealthy ? Colors.green : Colors.orange;
+    return Row(
+      children: [
+        Icon(
+          isHealthy ? Icons.check_circle : Icons.error_outline,
+          size: 18,
+          color: color,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+        if (detail != null)
+          Text(
+            detail,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w500,
+                ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHealthIndicator(
+      String label, double percent, Color good, Color warn, Color error,
+      {String? detail}) {
     final clampedPercent = percent.clamp(0.0, 100.0);
-    final color = clampedPercent < 70 ? good : clampedPercent < 90 ? warn : error;
-    
+    final color = clampedPercent < 70
+        ? good
+        : clampedPercent < 90
+            ? warn
+            : error;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -979,7 +1162,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text(label, style: Theme.of(context).textTheme.labelMedium),
             Text(
               '${clampedPercent.toStringAsFixed(1)}%',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color, fontWeight: FontWeight.bold),
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: color, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -987,7 +1173,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 2),
           Text(
             detail,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: Colors.grey[700]),
           ),
         ],
         const SizedBox(height: 4),
@@ -1015,9 +1204,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text(
               'Unavailable',
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: Colors.grey[700],
-                fontWeight: FontWeight.w600,
-              ),
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w600,
+                  ),
             ),
           ],
         ),
@@ -1025,7 +1214,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 2),
           Text(
             detail,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: Colors.grey[700]),
           ),
         ],
         const SizedBox(height: 6),
@@ -1051,13 +1243,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.flash_on, color: Theme.of(context).colorScheme.primary),
+                Icon(Icons.flash_on,
+                    color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
                 Text(
                   'Quick Actions',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ],
             ),
@@ -1066,20 +1259,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _buildQuickActionButton('Refresh', Icons.refresh, () => _refreshStatus()),
-                _buildQuickActionButton('Agents', Icons.people, () => _navigateToAgentMonitor()),
-                _buildQuickActionButton('Chat', Icons.chat, () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: _service)),
-                )),
-                _buildQuickActionButton('Logs', Icons.list, () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LogsScreen()),
-                )),
-                _buildQuickActionButton('Settings', Icons.settings, () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                )),
+                _buildQuickActionButton(
+                    'Refresh', Icons.refresh, () => _refreshStatus()),
+                _buildQuickActionButton(
+                    'Agents', Icons.people, () => _navigateToAgentMonitor()),
+                _buildQuickActionButton('Chat', Icons.chat, () {
+                  if (widget.onOpenChat != null) {
+                    widget.onOpenChat!();
+                    return;
+                  }
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) =>
+                            ChatScreen(gatewayService: _service)),
+                  );
+                }),
+                _buildQuickActionButton(
+                    'Logs',
+                    Icons.list,
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => const LogsScreen()),
+                        )),
+                _buildQuickActionButton(
+                    'Runtime',
+                    Icons.developer_mode,
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) =>
+                                  const LocalInstallerScreen()),
+                        )),
+                _buildQuickActionButton(
+                    'Settings',
+                    Icons.settings,
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (context) => const SettingsScreen()),
+                        )),
               ],
             ),
           ],
@@ -1088,7 +1309,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildQuickActionButton(String label, IconData icon, VoidCallback onPressed) {
+  Widget _buildQuickActionButton(
+      String label, IconData icon, VoidCallback onPressed) {
     return OutlinedButton.icon(
       onPressed: onPressed,
       icon: Icon(icon, size: 18),
@@ -1102,7 +1324,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildNavigationDrawer() {
     final agentCount = _status?.agents?.length ?? 0;
     final nodeCount = _status?.nodes?.length ?? 0;
-    
+
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
@@ -1132,29 +1354,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Text(
                   'OpenClaw Mobile',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
                 Text(
                   _gatewayName ?? 'Dashboard',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withOpacity(0.8),
-                  ),
+                        color: Colors.white.withOpacity(0.8),
+                      ),
                 ),
               ],
             ),
           ),
-          
+
           // Navigation items
           ListTile(
-            leading: Icon(Icons.home, color: Theme.of(context).colorScheme.primary),
+            leading:
+                Icon(Icons.home, color: Theme.of(context).colorScheme.primary),
             title: const Text('Dashboard'),
             selected: true,
             onTap: () => Navigator.pop(context),
           ),
           ListTile(
-            leading: Icon(Icons.people, color: Theme.of(context).colorScheme.primary),
+            leading: Icon(Icons.people,
+                color: Theme.of(context).colorScheme.primary),
             title: const Text('Agent Monitor'),
             subtitle: agentCount > 0 ? Text('$agentCount agents') : null,
             onTap: () {
@@ -1163,18 +1387,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           ListTile(
-            leading: Icon(Icons.chat, color: Theme.of(context).colorScheme.primary),
+            leading:
+                Icon(Icons.chat, color: Theme.of(context).colorScheme.primary),
             title: const Text('Chat'),
             onTap: () {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: _service)),
+                MaterialPageRoute(
+                    builder: (context) => ChatScreen(gatewayService: _service)),
               );
             },
           ),
           ListTile(
-            leading: Icon(Icons.list, color: Theme.of(context).colorScheme.primary),
+            leading:
+                Icon(Icons.list, color: Theme.of(context).colorScheme.primary),
             title: const Text('Logs'),
             onTap: () {
               Navigator.pop(context);
@@ -1185,7 +1412,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             },
           ),
           ListTile(
-            leading: Icon(Icons.phone_android, color: Theme.of(context).colorScheme.primary),
+            leading: Icon(Icons.phone_android,
+                color: Theme.of(context).colorScheme.primary),
             title: const Text('Termux'),
             onTap: () {
               Navigator.pop(context);
@@ -1197,7 +1425,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const Divider(),
           ListTile(
-            leading: Icon(Icons.devices, color: Theme.of(context).colorScheme.primary),
+            leading: Icon(Icons.devices,
+                color: Theme.of(context).colorScheme.primary),
             title: Text('Nodes ($nodeCount)'),
             onTap: () {
               Navigator.pop(context);
@@ -1206,7 +1435,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const Divider(),
           ListTile(
-            leading: Icon(Icons.settings, color: Theme.of(context).colorScheme.primary),
+            leading: Icon(Icons.settings,
+                color: Theme.of(context).colorScheme.primary),
             title: const Text('Settings'),
             onTap: () {
               Navigator.pop(context);
@@ -1223,7 +1453,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _showNodesDialog() {
     final nodes = _status?.nodes ?? [];
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1252,11 +1482,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     final node = nodes[index];
                     return ListTile(
                       leading: Icon(
-                        node.status == 'connected' ? Icons.check_circle : Icons.error,
-                        color: node.status == 'connected' ? Colors.green : Colors.red,
+                        node.status == 'connected'
+                            ? Icons.check_circle
+                            : Icons.error,
+                        color: node.status == 'connected'
+                            ? Colors.green
+                            : Colors.red,
                       ),
                       title: Text(node.name),
-                      subtitle: Text('${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}'),
+                      subtitle: Text(
+                          '${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}'),
                     );
                   },
                 ),

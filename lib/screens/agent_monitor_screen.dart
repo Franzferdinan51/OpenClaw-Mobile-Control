@@ -2,12 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/gateway_service.dart';
-import '../services/connection_monitor_service.dart';
 import '../models/agent_session.dart';
 import '../models/gateway_status.dart';
 import '../widgets/agent_visualization_widget.dart';
+import '../widgets/activity_feed_mobile.dart';
 import '../widgets/gateway_status_card.dart';
 import '../widgets/connection_status_icon.dart';
+import 'agent_detail_screen.dart';
+import 'boss_chat_screen.dart';
 
 class AgentMonitorScreen extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -22,6 +24,7 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   GatewayService? _service;
   GatewayStatus? _gatewayStatus;
   List<AgentSession> _agents = [];
+  List<ActivityEvent> _activityEvents = [];
   Map<String, dynamic>? _stats;
   bool _loading = true;
   String? _error;
@@ -39,9 +42,11 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
       setState(() => _service = widget.gatewayService);
     } else {
       final prefs = await SharedPreferences.getInstance();
-      final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
+      final gatewayUrl =
+          prefs.getString('gateway_url') ?? 'http://localhost:18789';
       final token = prefs.getString('gateway_token');
-      setState(() => _service = GatewayService(baseUrl: gatewayUrl, token: token));
+      setState(
+          () => _service = GatewayService(baseUrl: gatewayUrl, token: token));
     }
     await _refreshAgents();
     _startAutoRefresh();
@@ -49,7 +54,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
 
   void _startAutoRefresh() {
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => _refreshAgents());
+    _refreshTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) => _refreshAgents());
   }
 
   Future<void> _refreshAgents() async {
@@ -57,13 +63,18 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
 
     try {
       final gatewayStatus = await _service!.getStatus();
-      final agents = await _service!.getAgents();
+      final agents = await _service!.getAgents() ?? [];
       final stats = await _service!.getAgentStats();
+      final activityEvents = _buildActivityEvents(_agents, agents);
 
       if (mounted) {
         setState(() {
           _gatewayStatus = gatewayStatus;
-          _agents = agents ?? [];
+          _agents = agents;
+          _activityEvents = [
+            ...activityEvents,
+            ..._activityEvents,
+          ].take(60).toList();
           _stats = stats;
           _loading = false;
           _error = null;
@@ -92,6 +103,19 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
       appBar: AppBar(
         title: const Text('Agent Monitor'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.campaign_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) =>
+                      BossChatScreen(gatewayService: _service),
+                ),
+              );
+            },
+            tooltip: 'Boss Chat',
+          ),
           const ConnectionStatusIcon(),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -117,7 +141,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
         children: [
           const Icon(Icons.error_outline, size: 64, color: Colors.red),
           const SizedBox(height: 16),
-          Text('Connection Error', style: Theme.of(context).textTheme.headlineSmall),
+          Text('Connection Error',
+              style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
           Text(_error!, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 16),
@@ -141,11 +166,11 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
           onRefresh: _refreshAgents,
         ),
         const SizedBox(height: 16),
-        
+
         // Quick Stats
         _buildStatsCard(),
         const SizedBox(height: 16),
-        
+
         // Agent Visualization Widget (compact mode for list integration)
         AgentVisualizationWidget(
           gatewayService: _service,
@@ -153,11 +178,22 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
           compact: true,
         ),
         const SizedBox(height: 16),
-        
+
+        SizedBox(
+          height: 340,
+          child: ActivityFeedMobile(
+            events: _activityEvents,
+            loading: _loading,
+            error: _error,
+            onRefresh: _refreshAgents,
+          ),
+        ),
+        const SizedBox(height: 16),
+
         // Agents Header
         _buildAgentsHeader(),
         const SizedBox(height: 8),
-        
+
         // Agent List
         if (_agents.isEmpty)
           _buildEmptyState()
@@ -183,7 +219,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
               children: [
                 const Icon(Icons.analytics, color: Color(0xFF00D4AA)),
                 const SizedBox(width: 8),
-                Text('System Stats', style: Theme.of(context).textTheme.titleLarge),
+                Text('System Stats',
+                    style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
             const SizedBox(height: 16),
@@ -191,7 +228,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildStatItem('Total Agents', total.toString(), Icons.people),
-                _buildStatItem('Active', active.toString(), Icons.play_circle, color: Colors.green),
+                _buildStatItem('Active', active.toString(), Icons.play_circle,
+                    color: Colors.green),
                 _buildStatItem('Tokens', _formatTokens(tokens), Icons.token),
               ],
             ),
@@ -201,12 +239,17 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
     );
   }
 
-  Widget _buildStatItem(String label, String value, IconData icon, {Color? color}) {
+  Widget _buildStatItem(String label, String value, IconData icon,
+      {Color? color}) {
     return Column(
       children: [
         Icon(icon, color: color ?? Colors.grey, size: 28),
         const SizedBox(height: 8),
-        Text(value, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+        Text(value,
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(fontWeight: FontWeight.bold)),
         Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
@@ -217,8 +260,133 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text('Agents', style: Theme.of(context).textTheme.titleLarge),
-        Text('${_agents.length} total', style: Theme.of(context).textTheme.bodySmall),
+        Text('${_agents.length} total',
+            style: Theme.of(context).textTheme.bodySmall),
       ],
+    );
+  }
+
+  List<ActivityEvent> _buildActivityEvents(
+    List<AgentSession> previous,
+    List<AgentSession> next,
+  ) {
+    final now = DateTime.now();
+    final previousByKey = {
+      for (final agent in previous)
+        if (agent.key.isNotEmpty) agent.key: agent,
+    };
+    final nextByKey = {
+      for (final agent in next)
+        if (agent.key.isNotEmpty) agent.key: agent,
+    };
+    final events = <ActivityEvent>[];
+
+    for (final agent in next) {
+      final prior = previousByKey[agent.key];
+      if (prior == null) {
+        events.add(
+          _createActivityEvent(
+            agent,
+            type: 'system',
+            message: 'Session connected',
+            timestamp: now,
+          ),
+        );
+        continue;
+      }
+
+      if (!prior.isActive && agent.isActive) {
+        events.add(
+          _createActivityEvent(
+            agent,
+            type: 'task_start',
+            message: agent.statusSummary ?? 'Agent became active',
+            timestamp: now,
+          ),
+        );
+      } else if (prior.isActive && !agent.isActive) {
+        events.add(
+          _createActivityEvent(
+            agent,
+            type: 'task_complete',
+            message: agent.statusSummary ?? 'Agent is now idle',
+            timestamp: now,
+          ),
+        );
+      }
+
+      if (prior.currentToolName != agent.currentToolName &&
+          agent.currentToolName != null &&
+          agent.currentToolName!.isNotEmpty) {
+        final detail =
+            agent.currentToolPhase != null && agent.currentToolPhase!.isNotEmpty
+                ? '${agent.currentToolName} (${agent.currentToolPhase})'
+                : agent.currentToolName!;
+        events.add(
+          _createActivityEvent(
+            agent,
+            type: 'tool_call',
+            message: 'Using $detail',
+            timestamp: now,
+          ),
+        );
+      }
+
+      if (prior.statusSummary != agent.statusSummary &&
+          agent.statusSummary != null &&
+          agent.statusSummary!.isNotEmpty) {
+        events.add(
+          _createActivityEvent(
+            agent,
+            type: 'state_change',
+            message: agent.statusSummary!,
+            timestamp: now,
+          ),
+        );
+      }
+
+      if (!prior.aborted && agent.aborted) {
+        events.add(
+          _createActivityEvent(
+            agent,
+            type: 'error',
+            message: 'Session aborted',
+            timestamp: now,
+          ),
+        );
+      }
+    }
+
+    for (final prior in previous) {
+      if (!nextByKey.containsKey(prior.key)) {
+        events.add(
+          _createActivityEvent(
+            prior,
+            type: 'system',
+            message: 'Session disconnected',
+            timestamp: now,
+          ),
+        );
+      }
+    }
+
+    return events;
+  }
+
+  ActivityEvent _createActivityEvent(
+    AgentSession agent, {
+    required String type,
+    required String message,
+    required DateTime timestamp,
+  }) {
+    return ActivityEvent(
+      id: '${agent.key}-$type-${timestamp.millisecondsSinceEpoch}',
+      agentId: agent.id,
+      agentName: agent.name,
+      agentEmoji: agent.emoji ?? '🤖',
+      type: type,
+      message: message,
+      timestamp: timestamp,
     );
   }
 
@@ -230,7 +398,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
           children: [
             Icon(Icons.people_outline, size: 64, color: Colors.grey[600]),
             const SizedBox(height: 16),
-            Text('No agents active', style: Theme.of(context).textTheme.titleMedium),
+            Text('No agents active',
+                style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
               'Start a session to see agents here',
@@ -261,7 +430,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
                   // Agent avatar/emoji
                   CircleAvatar(
                     backgroundColor: statusColor.withOpacity(0.2),
-                    child: Text(agent.emoji ?? '🤖', style: const TextStyle(fontSize: 20)),
+                    child: Text(agent.emoji ?? '🤖',
+                        style: const TextStyle(fontSize: 20)),
                   ),
                   const SizedBox(width: 12),
                   // Agent name and status
@@ -274,19 +444,24 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
                             Expanded(
                               child: Text(
                                 agent.name,
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
                               ),
                             ),
                             if (agent.isSubagent)
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
                                   color: Colors.purple.withOpacity(0.2),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: const Text('Sub', style: TextStyle(fontSize: 10)),
+                                child: const Text('Sub',
+                                    style: TextStyle(fontSize: 10)),
                               ),
                           ],
                         ),
@@ -302,9 +477,12 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
                             Expanded(
                               child: Text(
                                 agent.statusDisplay,
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: statusColor,
-                                ),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: statusColor,
+                                    ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -332,10 +510,12 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
                 ),
               ],
               // Current tool
-              if (agent.currentToolName != null && agent.currentToolName!.isNotEmpty) ...[
+              if (agent.currentToolName != null &&
+                  agent.currentToolName!.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: Colors.grey[800],
                     borderRadius: BorderRadius.circular(8),
@@ -347,7 +527,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
                       const SizedBox(width: 4),
                       Text(
                         agent.currentToolName!,
-                        style: const TextStyle(fontSize: 11, color: Colors.white70),
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.white70),
                       ),
                     ],
                   ),
@@ -374,7 +555,8 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
           Text(label, style: TextStyle(fontSize: 9, color: color)),
           Text(
             _formatTokens(tokens),
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.bold, color: color),
           ),
         ],
       ),
@@ -404,109 +586,14 @@ class _AgentMonitorScreenState extends State<AgentMonitorScreen> {
   }
 
   void _showAgentDetails(AgentSession agent) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.4,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => SingleChildScrollView(
-          controller: scrollController,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[600],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundColor: Colors.grey[800],
-                    child: Text(agent.emoji ?? '🤖', style: const TextStyle(fontSize: 30)),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(agent.name, style: Theme.of(context).textTheme.headlineSmall),
-                        Text(agent.model, style: Theme.of(context).textTheme.bodySmall),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              _buildDetailRow('Session Key', agent.key),
-              _buildDetailRow('Channel', agent.channel),
-              _buildDetailRow('Kind', agent.kind),
-              if (agent.label != null) _buildDetailRow('Label', agent.label!),
-              if (agent.currentToolName != null)
-                _buildDetailRow('Current Tool', '${agent.currentToolName} (${agent.currentToolPhase ?? 'running'})'),
-              if (agent.statusSummary != null)
-                _buildDetailRow('Status', agent.statusSummary!),
-              const SizedBox(height: 16),
-              const Text('Token Usage', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildUsageItem('Input', agent.inputTokens, Colors.blue),
-                  _buildUsageItem('Output', agent.outputTokens, Colors.orange),
-                  _buildUsageItem('Context', agent.contextTokens, Colors.purple),
-                  _buildUsageItem('Total', agent.totalTokens, Colors.green),
-                ],
-              ),
-            ],
-          ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AgentDetailScreen(
+          session: agent,
+          gatewayService: _service,
         ),
       ),
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(label, style: const TextStyle(color: Colors.grey)),
-          ),
-          Expanded(
-            child: Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUsageItem(String label, int tokens, Color color) {
-    return Column(
-      children: [
-        Text(
-          _formatTokens(tokens),
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color),
-        ),
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-      ],
     );
   }
 }

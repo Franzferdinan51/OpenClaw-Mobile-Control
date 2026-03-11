@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../services/termux_service.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../services/gateway_service.dart';
+import '../services/termux_run_command_service.dart';
+import '../utils/android_package_detector.dart';
 
 class TermuxScreen extends StatefulWidget {
   const TermuxScreen({super.key});
@@ -10,117 +13,250 @@ class TermuxScreen extends StatefulWidget {
 }
 
 class _TermuxScreenState extends State<TermuxScreen> {
-  final TermuxService _service = TermuxService();
+  final TermuxRunCommandService _bridge = TermuxRunCommandService();
   final TextEditingController _commandController = TextEditingController();
   final ScrollController _outputScrollController = ScrollController();
   final List<_OutputLine> _output = [];
 
-  bool _isLoading = false;
-  bool _isInitialized = false;
-  bool _isTermuxAvailable = false;
-  bool _isProotAvailable = false;
-  bool _isUbuntuInstalled = false;
-  bool _isSetupComplete = false;
-  String? _openClawVersion;
-  String? _nodeVersion;
+  bool _isRefreshing = false;
+  bool _isSending = false;
+  bool _isTermuxInstalled = false;
+  bool _isTermuxApiInstalled = false;
+  bool _hasRunCommandPermission = false;
   bool _isGatewayRunning = false;
-  double _setupProgress = 0.0;
-  String _setupStatus = '';
-  bool _isSetupRunning = false;
+  String? _termuxVersion;
+  String? _termuxApiVersion;
+  final String _gatewayUrl = 'http://127.0.0.1:18789';
 
   @override
   void initState() {
     super.initState();
-    _initializeService();
+    _addOutput(
+      'Refreshing Termux bridge status...',
+      isSystem: true,
+    );
+    _refreshStatus(logSummary: false);
   }
 
-  Future<void> _initializeService() async {
+  Future<void> _refreshStatus({bool logSummary = true}) async {
     setState(() {
-      _output.add(_OutputLine('Initializing Termux service...', isSystem: true));
+      _isRefreshing = true;
     });
 
-    // Set up progress callback
-    _service.onSetupProgress = (progress) {
+    try {
+      final termuxResult = await AndroidPackageDetector.checkTermux();
+      final termuxApiResult = await AndroidPackageDetector.checkTermuxApi();
+
+      bool hasPermission = false;
+      try {
+        hasPermission = await _bridge.hasRunCommandPermission();
+      } catch (e) {
+        _addOutput(
+          'Could not verify RUN_COMMAND permission: $e',
+          isSystem: true,
+          isWarning: true,
+        );
+      }
+
+      final gatewayResult =
+          await GatewayService(baseUrl: _gatewayUrl).checkConnection();
+      final gatewayRunning = gatewayResult['success'] == true;
+
+      if (!mounted) return;
+
       setState(() {
-        _setupProgress = progress.progress;
-        _setupStatus = progress.message;
-        if (progress.isError) {
-          _output.add(_OutputLine('✗ ${progress.message}', isSystem: true, isError: true));
-        } else if (progress.isComplete) {
-          _output.add(_OutputLine('✓ ${progress.message}', isSystem: true, isSuccess: true));
-        } else {
-          _output.add(_OutputLine('⏳ ${progress.message}', isSystem: true));
-        }
+        _isTermuxInstalled = termuxResult.isInstalled;
+        _isTermuxApiInstalled = termuxApiResult.isInstalled;
+        _hasRunCommandPermission = hasPermission;
+        _isGatewayRunning = gatewayRunning;
+        _termuxVersion = termuxResult.versionName;
+        _termuxApiVersion = termuxApiResult.versionName;
       });
-      _scrollToBottom();
-    };
 
-    _service.onOutput = (line) {
-      setState(() {
-        _output.add(_OutputLine(line, isSystem: true));
-      });
-      _scrollToBottom();
-    };
-
-    final initialized = await _service.initialize();
-
-    setState(() {
-      _isInitialized = initialized;
-      _isTermuxAvailable = _service.isTermuxAvailable;
-      _isProotAvailable = _service.isProotAvailable;
-      _isUbuntuInstalled = _service.isUbuntuInstalled;
-      _isSetupComplete = _service.isSetupComplete;
-
-      if (_isTermuxAvailable) {
-        _output.add(_OutputLine('✓ Termux environment detected', isSystem: true, isSuccess: true));
-      } else {
-        _output.add(_OutputLine('⚠ Termux not available', isSystem: true, isWarning: true));
-        _output.add(_OutputLine('   Install Termux from F-Droid:', isSystem: true));
-        _output.add(_OutputLine('   https://f-droid.org/packages/com.termux/', isSystem: true));
+      if (logSummary) {
+        _addOutput(
+          _isTermuxInstalled
+              ? 'Termux ${_termuxVersion ?? ""} detected'
+              : 'Termux is not installed',
+          isSystem: true,
+          isSuccess: _isTermuxInstalled,
+          isWarning: !_isTermuxInstalled,
+        );
+        _addOutput(
+          _isTermuxApiInstalled
+              ? 'Termux:API ${_termuxApiVersion ?? ""} detected'
+              : 'Termux:API is not installed',
+          isSystem: true,
+          isSuccess: _isTermuxApiInstalled,
+          isWarning: !_isTermuxApiInstalled,
+        );
+        _addOutput(
+          _hasRunCommandPermission
+              ? 'RUN_COMMAND permission is granted'
+              : 'RUN_COMMAND permission is missing for this app',
+          isSystem: true,
+          isSuccess: _hasRunCommandPermission,
+          isWarning: !_hasRunCommandPermission,
+        );
+        _addOutput(
+          _isGatewayRunning
+              ? 'Gateway is reachable at $_gatewayUrl'
+              : 'Gateway is not reachable at $_gatewayUrl',
+          isSystem: true,
+          isSuccess: _isGatewayRunning,
+          isWarning: !_isGatewayRunning,
+        );
+        _addSeparator();
       }
-
-      if (_isProotAvailable) {
-        _output.add(_OutputLine('✓ proot-distro available', isSystem: true, isSuccess: true));
+    } catch (e) {
+      _addOutput(
+        'Status refresh failed: $e',
+        isSystem: true,
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
       }
+    }
+  }
 
-      if (_isUbuntuInstalled) {
-        _output.add(_OutputLine('✓ Ubuntu installed', isSystem: true, isSuccess: true));
-      }
-    });
-
-    // Check OpenClaw installation
-    if (_isSetupComplete) {
-      await _checkOpenClawStatus();
+  Future<void> _sendCommand({
+    required String label,
+    required String script,
+    String? description,
+  }) async {
+    if (!_isTermuxInstalled) {
+      _showSnackBar('Install Termux first');
+      return;
     }
 
-    _addSeparator();
+    if (!_hasRunCommandPermission) {
+      _showSnackBar('Grant RUN_COMMAND permission first');
+      return;
+    }
+
+    setState(() {
+      _isSending = true;
+    });
+
+    final trimmedScript = script.trim();
+    _addOutput('Sending command to Termux: $label', isSystem: true);
+    _addOutput(trimmedScript, isCommand: true);
+
+    try {
+      final success = await _bridge.runCommand(
+        script: trimmedScript,
+        label: label,
+        description: description,
+        background: false,
+      );
+
+      if (!mounted) return;
+
+      if (success) {
+        _addOutput(
+          'Command accepted by Termux. Watch the Termux session for output.',
+          isSystem: true,
+          isSuccess: true,
+        );
+
+        if (trimmedScript.contains('openclaw gateway')) {
+          Future<void>.delayed(const Duration(seconds: 1), () {
+            if (mounted) {
+              _refreshStatus(logSummary: false);
+            }
+          });
+        }
+      } else {
+        _addOutput(
+          'Termux did not accept the command.',
+          isSystem: true,
+          isError: true,
+        );
+      }
+    } catch (e) {
+      _addOutput(
+        'Command failed: $e',
+        isSystem: true,
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+        });
+      }
+    }
   }
 
-  Future<void> _checkOpenClawStatus() async {
-    final isInstalled = await _service.checkOpenClawInstalled();
-    setState(() {
-      _openClawVersion = _service.openClawVersion;
-      if (isInstalled) {
-        _output.add(_OutputLine('✓ OpenClaw $_openClawVersion installed', isSystem: true, isSuccess: true));
-      } else {
-        _output.add(_OutputLine('⚠ OpenClaw not installed', isSystem: true, isWarning: true));
-      }
-    });
+  Future<void> _sendTypedCommand() async {
+    final command = _commandController.text.trim();
+    if (command.isEmpty) return;
 
-    // Check if gateway is running
-    final isRunning = await _service.isGatewayRunning();
+    _commandController.clear();
+    await _sendCommand(
+      label: 'Custom DuckBot Command',
+      script: command,
+      description: 'Run a custom command in Termux',
+    );
+  }
+
+  Future<void> _copySetupCommands() async {
+    await Clipboard.setData(
+      ClipboardData(text: _bridge.noRootInstallScript.trim()),
+    );
+    _showSnackBar('Setup commands copied');
+  }
+
+  Future<void> _launchTermux() async {
+    final launched = await _bridge.launchTermux();
+    if (!mounted) return;
+
+    if (!launched) {
+      _showSnackBar('Termux is not installed');
+    }
+  }
+
+  Future<void> _openAppSettings({String? packageName}) async {
+    await _bridge.openAppSettings(packageName: packageName);
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        mounted) {
+      _showSnackBar('Could not open $url');
+    }
+  }
+
+  void _addOutput(
+    String text, {
+    bool isCommand = false,
+    bool isSystem = false,
+    bool isSuccess = false,
+    bool isError = false,
+    bool isWarning = false,
+  }) {
     setState(() {
-      _isGatewayRunning = isRunning;
-      if (isRunning) {
-        _output.add(_OutputLine('✓ Gateway is running', isSystem: true, isSuccess: true));
-      }
+      _output.add(
+        _OutputLine(
+          text,
+          isCommand: isCommand,
+          isSystem: isSystem,
+          isSuccess: isSuccess,
+          isError: isError,
+          isWarning: isWarning,
+        ),
+      );
     });
+    _scrollToBottom();
   }
 
   void _addSeparator() {
-    setState(() {
-      _output.add(_OutputLine('─' * 40, isSystem: true));
-    });
+    _addOutput('─' * 40, isSystem: true);
   }
 
   void _scrollToBottom() {
@@ -135,198 +271,49 @@ class _TermuxScreenState extends State<TermuxScreen> {
     });
   }
 
-  Future<void> _runSetup() async {
-    if (_isSetupRunning) return;
-
-    setState(() {
-      _isSetupRunning = true;
-      _isLoading = true;
-      _output.add(_OutputLine('Starting setup...', isSystem: true));
-    });
-
-    final success = await _service.runSetup();
-
-    setState(() {
-      _isSetupRunning = false;
-      _isLoading = false;
-      _isSetupComplete = _service.isSetupComplete;
-      _openClawVersion = _service.openClawVersion;
-      _nodeVersion = _service.nodeVersion;
-
-      if (success) {
-        _output.add(_OutputLine('✓ Setup completed successfully!', isSystem: true, isSuccess: true));
-      } else {
-        _output.add(_OutputLine('✗ Setup failed', isSystem: true, isError: true));
-      }
-    });
-
-    _addSeparator();
-  }
-
-  Future<void> _executeCommand() async {
-    final command = _commandController.text.trim();
-    if (command.isEmpty) return;
-
-    setState(() {
-      _output.add(_OutputLine('\$ $command', isCommand: true));
-      _commandController.clear();
-      _isLoading = true;
-    });
-
-    _scrollToBottom();
-
-    final result = await _service.executeCommand(command, useProot: true);
-
-    setState(() {
-      _isLoading = false;
-      if (result.stdout.isNotEmpty) {
-        _output.add(_OutputLine(result.stdout));
-      }
-      if (result.stderr.isNotEmpty) {
-        _output.add(_OutputLine(result.stderr, isError: true));
-      }
-      _output.add(_OutputLine(
-        '[Exit code: ${result.exitCode}, ${result.duration.inMilliseconds}ms]',
-        isSystem: true,
-        isSuccess: result.success,
-        isError: !result.success,
-      ));
-    });
-
-    _scrollToBottom();
-  }
-
-  Future<void> _installOpenClaw() async {
-    setState(() {
-      _output.add(_OutputLine('Installing OpenClaw...', isSystem: true));
-      _isLoading = true;
-    });
-
-    final result = await _service.installOpenClaw();
-
-    setState(() {
-      _isLoading = false;
-      _openClawVersion = _service.openClawVersion;
-      if (result.success) {
-        _output.add(_OutputLine('✓ OpenClaw installed successfully!', isSystem: true, isSuccess: true));
-        _output.add(_OutputLine('Version: $_openClawVersion', isSystem: true));
-      } else {
-        _output.add(_OutputLine('✗ Installation failed: ${result.stderr}', isSystem: true, isError: true));
-      }
-    });
-  }
-
-  Future<void> _updateOpenClaw() async {
-    setState(() {
-      _output.add(_OutputLine('Updating OpenClaw...', isSystem: true));
-      _isLoading = true;
-    });
-
-    final result = await _service.updateOpenClaw();
-
-    setState(() {
-      _isLoading = false;
-      _openClawVersion = _service.openClawVersion;
-      if (result.success) {
-        _output.add(_OutputLine('✓ OpenClaw updated!', isSystem: true, isSuccess: true));
-        _output.add(_OutputLine('New version: $_openClawVersion', isSystem: true));
-      } else {
-        _output.add(_OutputLine('✗ Update failed: ${result.stderr}', isSystem: true, isError: true));
-      }
-    });
-  }
-
-  Future<void> _startGateway() async {
-    setState(() {
-      _output.add(_OutputLine('Starting OpenClaw gateway...', isSystem: true));
-      _isLoading = true;
-    });
-
-    final result = await _service.startGateway();
-
-    setState(() {
-      _isLoading = false;
-      if (result.success) {
-        _isGatewayRunning = true;
-        _output.add(_OutputLine('✓ Gateway started!', isSystem: true, isSuccess: true));
-        _output.add(_OutputLine('Access at: http://localhost:18789', isSystem: true));
-      } else {
-        _output.add(_OutputLine('✗ Failed to start gateway: ${result.stderr}', isSystem: true, isError: true));
-      }
-    });
-  }
-
-  Future<void> _stopGateway() async {
-    setState(() {
-      _output.add(_OutputLine('Stopping OpenClaw gateway...', isSystem: true));
-      _isLoading = true;
-    });
-
-    final result = await _service.stopGateway();
-
-    setState(() {
-      _isLoading = false;
-      _isGatewayRunning = false;
-      if (result.success) {
-        _output.add(_OutputLine('✓ Gateway stopped', isSystem: true, isSuccess: true));
-      } else {
-        _output.add(_OutputLine('Gateway stop result: ${result.stderr}', isSystem: true, isWarning: true));
-      }
-    });
-  }
-
-  Future<void> _runQuickCommand(String label, String command) async {
-    setState(() {
-      _output.add(_OutputLine('Running: $label', isSystem: true));
-      _output.add(_OutputLine('\$ $command', isCommand: true));
-      _isLoading = true;
-    });
-
-    _scrollToBottom();
-
-    final result = await _service.runQuickCommand(command);
-
-    setState(() {
-      _isLoading = false;
-      if (result.stdout.isNotEmpty) {
-        _output.add(_OutputLine(result.stdout));
-      }
-      if (result.stderr.isNotEmpty) {
-        _output.add(_OutputLine(result.stderr, isError: true));
-      }
-    });
-
-    _scrollToBottom();
-  }
-
   void _copyOutput() {
     final allOutput = _output.map((line) => line.text).join('\n');
     Clipboard.setData(ClipboardData(text: allOutput));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Output copied to clipboard'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+    _showSnackBar('Bridge log copied');
   }
 
   void _clearOutput() {
     setState(() {
       _output.clear();
-      _output.add(_OutputLine('Console cleared', isSystem: true));
     });
+    _addOutput('Bridge log cleared', isSystem: true);
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Termux Console'),
+        title: const Text('Termux Bridge'),
         centerTitle: true,
         actions: [
           IconButton(
+            icon: _isRefreshing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            tooltip: 'Refresh status',
+            onPressed: _isRefreshing ? null : () => _refreshStatus(),
+          ),
+          IconButton(
             icon: const Icon(Icons.copy),
-            tooltip: 'Copy output',
+            tooltip: 'Copy bridge log',
             onPressed: _copyOutput,
           ),
           IconButton(
@@ -338,16 +325,9 @@ class _TermuxScreenState extends State<TermuxScreen> {
       ),
       body: Column(
         children: [
-          // Status bar
           _buildStatusBar(),
-
-          // Setup progress indicator
-          if (_isSetupRunning) _buildSetupProgress(),
-
-          // Quick actions bar
+          _buildNoticeBanner(),
           _buildQuickActionsBar(),
-
-          // Terminal output
           Expanded(
             child: Container(
               color: const Color(0xFF1E1E1E),
@@ -362,8 +342,6 @@ class _TermuxScreenState extends State<TermuxScreen> {
               ),
             ),
           ),
-
-          // Command input
           _buildCommandInput(),
         ],
       ),
@@ -379,73 +357,68 @@ class _TermuxScreenState extends State<TermuxScreen> {
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
       ),
-      child: Row(
-        children: [
-          // Termux status
-          _statusChip(
-            'Termux',
-            _isTermuxAvailable ? Icons.check_circle : Icons.error,
-            _isTermuxAvailable ? Colors.green : Colors.red,
-          ),
-          const SizedBox(width: 8),
-
-          // Ubuntu status
-          _statusChip(
-            'Ubuntu',
-            _isUbuntuInstalled ? Icons.check_circle : Icons.pending,
-            _isUbuntuInstalled ? Colors.green : Colors.orange,
-          ),
-          const SizedBox(width: 8),
-
-          // OpenClaw status
-          _statusChip(
-            _openClawVersion ?? 'OpenClaw',
-            _openClawVersion != null ? Icons.check_circle : Icons.download,
-            _openClawVersion != null ? Colors.green : Colors.grey,
-          ),
-          const SizedBox(width: 8),
-
-          // Gateway status
-          _statusChip(
-            _isGatewayRunning ? 'Running' : 'Stopped',
-            _isGatewayRunning ? Icons.play_circle : Icons.stop_circle,
-            _isGatewayRunning ? Colors.green : Colors.grey,
-          ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _statusChip(
+              'Termux',
+              _isTermuxInstalled ? (_termuxVersion ?? 'Installed') : 'Missing',
+              _isTermuxInstalled,
+            ),
+            const SizedBox(width: 8),
+            _statusChip(
+              'Termux:API',
+              _isTermuxApiInstalled
+                  ? (_termuxApiVersion ?? 'Installed')
+                  : 'Missing',
+              _isTermuxApiInstalled,
+            ),
+            const SizedBox(width: 8),
+            _statusChip(
+              'RUN_COMMAND',
+              _hasRunCommandPermission ? 'Granted' : 'Missing',
+              _hasRunCommandPermission,
+            ),
+            const SizedBox(width: 8),
+            _statusChip(
+              'Gateway',
+              _isGatewayRunning ? 'Reachable' : 'Offline',
+              _isGatewayRunning,
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _statusChip(String label, IconData icon, Color color) {
+  Widget _statusChip(String label, String detail, bool ok) {
+    final color = ok ? Colors.green : Colors.orange;
     return Chip(
-      avatar: Icon(icon, size: 16, color: color),
-      label: Text(label, style: const TextStyle(fontSize: 11)),
-      backgroundColor: color.withOpacity(0.1),
+      avatar: Icon(
+        ok ? Icons.check_circle : Icons.error_outline,
+        size: 16,
+        color: color,
+      ),
+      label: Text(
+        '$label: $detail',
+        style: const TextStyle(fontSize: 11),
+      ),
+      backgroundColor: color.withValues(alpha: 0.12),
     );
   }
 
-  Widget _buildSetupProgress() {
+  Widget _buildNoticeBanner() {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(12),
-      color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _setupStatus,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-          ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: _setupProgress,
-            backgroundColor: Theme.of(context).colorScheme.surface,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${(_setupProgress * 100).toInt()}%',
-            style: const TextStyle(fontSize: 10),
-          ),
-        ],
+      color: Theme.of(context)
+          .colorScheme
+          .primaryContainer
+          .withValues(alpha: 0.35),
+      child: Text(
+        'This screen sends commands to the official Termux app. Command output appears in Termux, not inside DuckBot.',
+        style: Theme.of(context).textTheme.bodySmall,
       ),
     );
   }
@@ -463,66 +436,70 @@ class _TermuxScreenState extends State<TermuxScreen> {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
-            // Setup button (if not complete)
-            if (!_isSetupComplete && !_isSetupRunning)
-              _quickActionBtn(
-                'Setup',
-                Icons.build,
-                _runSetup,
-                isPrimary: true,
+            _quickActionBtn(
+              'Open Termux',
+              Icons.terminal,
+              _launchTermux,
+              isPrimary: true,
+            ),
+            _quickActionBtn(
+              'Copy Setup',
+              Icons.copy,
+              _copySetupCommands,
+            ),
+            _quickActionBtn(
+              'Send Setup',
+              Icons.download,
+              () => _sendCommand(
+                label: 'DuckBot No-Root Setup',
+                script: _bridge.noRootInstallScript,
+                description:
+                    'Install Node.js, termux-api, storage access, and OpenClaw',
               ),
-
-            // Install/Update OpenClaw
-            if (_isSetupComplete && _openClawVersion == null)
+            ),
+            _quickActionBtn(
+              'Start Gateway',
+              Icons.play_arrow,
+              () => _sendCommand(
+                label: 'Start OpenClaw Gateway',
+                script: _bridge.startGatewayScript,
+                description: 'Start the local OpenClaw gateway',
+              ),
+            ),
+            _quickActionBtn(
+              'Stop Gateway',
+              Icons.stop,
+              () => _sendCommand(
+                label: 'Stop OpenClaw Gateway',
+                script: _bridge.stopGatewayScript,
+                description: 'Stop the local OpenClaw gateway',
+              ),
+            ),
+            _quickActionBtn(
+              'Status',
+              Icons.info_outline,
+              () => _sendCommand(
+                label: 'OpenClaw Status',
+                script: _bridge.statusScript,
+                description: 'Check OpenClaw status inside Termux',
+              ),
+            ),
+            if (!_hasRunCommandPermission)
               _quickActionBtn(
-                'Install',
+                'Permission',
+                Icons.settings,
+                () => _openAppSettings(),
+              ),
+            if (!_isTermuxInstalled) ...[
+              _quickActionBtn(
+                'F-Droid',
                 Icons.download,
-                _installOpenClaw,
-              ),
-
-            if (_isSetupComplete && _openClawVersion != null)
-              _quickActionBtn(
-                'Update',
-                Icons.system_update,
-                _updateOpenClaw,
-              ),
-
-            const SizedBox(width: 8),
-
-            // Gateway controls
-            if (_isSetupComplete && _openClawVersion != null)
-              _isGatewayRunning
-                  ? _quickActionBtn(
-                      'Stop Gateway',
-                      Icons.stop,
-                      _stopGateway,
-                      color: Colors.red,
-                    )
-                  : _quickActionBtn(
-                      'Start Gateway',
-                      Icons.play_arrow,
-                      _startGateway,
-                      color: Colors.green,
-                    ),
-
-            const SizedBox(width: 8),
-
-            // OpenClaw commands
-            if (_isSetupComplete && _openClawVersion != null) ...[
-              _quickActionBtn(
-                'Status',
-                Icons.info_outline,
-                () => _runQuickCommand('Gateway Status', 'status'),
+                () => _openUrl(TermuxRunCommandService.termuxAppFdroidUrl),
               ),
               _quickActionBtn(
-                'Doctor',
-                Icons.medical_services,
-                () => _runQuickCommand('Doctor', 'doctor'),
-              ),
-              _quickActionBtn(
-                'Nodes',
-                Icons.hub,
-                () => _runQuickCommand('Node Status', 'nodes status'),
+                'Releases',
+                Icons.open_in_new,
+                () => _openUrl(TermuxRunCommandService.termuxAppGithubUrl),
               ),
             ],
           ],
@@ -536,7 +513,6 @@ class _TermuxScreenState extends State<TermuxScreen> {
     IconData icon,
     VoidCallback? onPressed, {
     bool isPrimary = false,
-    Color? color,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -550,10 +526,9 @@ class _TermuxScreenState extends State<TermuxScreen> {
               ),
             )
           : ActionChip(
-              avatar: Icon(icon, size: 14, color: color),
+              avatar: Icon(icon, size: 14),
               label: Text(label, style: const TextStyle(fontSize: 11)),
-              onPressed: onPressed ?? () {},
-              backgroundColor: onPressed == null ? Colors.grey.withOpacity(0.3) : null,
+              onPressed: onPressed,
             ),
     );
   }
@@ -589,6 +564,9 @@ class _TermuxScreenState extends State<TermuxScreen> {
   }
 
   Widget _buildCommandInput() {
+    final enabled =
+        !_isSending && _isTermuxInstalled && _hasRunCommandPermission;
+
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -600,7 +578,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
       child: Row(
         children: [
           const Text(
-            '\$ ',
+            r'$ ',
             style: TextStyle(
               fontFamily: 'monospace',
               fontSize: 16,
@@ -611,21 +589,23 @@ class _TermuxScreenState extends State<TermuxScreen> {
           Expanded(
             child: TextField(
               controller: _commandController,
-              decoration: const InputDecoration(
-                hintText: 'Enter command...',
+              decoration: InputDecoration(
+                hintText: enabled
+                    ? 'Send a command to Termux'
+                    : 'Install Termux and grant permission first',
                 border: InputBorder.none,
                 isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 8),
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
               ),
               style: const TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 14,
               ),
-              onSubmitted: (_) => _executeCommand(),
-              enabled: !_isLoading && _isSetupComplete,
+              onSubmitted: (_) => _sendTypedCommand(),
+              enabled: enabled,
             ),
           ),
-          if (_isLoading)
+          if (_isSending)
             const SizedBox(
               width: 20,
               height: 20,
@@ -634,7 +614,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
           else
             IconButton(
               icon: const Icon(Icons.send),
-              onPressed: _isSetupComplete ? _executeCommand : null,
+              onPressed: enabled ? _sendTypedCommand : null,
               color: Colors.cyan,
             ),
         ],
@@ -646,7 +626,6 @@ class _TermuxScreenState extends State<TermuxScreen> {
   void dispose() {
     _commandController.dispose();
     _outputScrollController.dispose();
-    _service.dispose();
     super.dispose();
   }
 }

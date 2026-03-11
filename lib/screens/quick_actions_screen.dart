@@ -1,329 +1,502 @@
 import 'package:flutter/material.dart';
-import '../services/termux_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/backup_service.dart';
 import '../services/gateway_service.dart';
+import '../services/local_metrics_service.dart';
+import 'agent_monitor_screen.dart';
+import 'backup_restore_screen.dart';
+import 'boss_chat_screen.dart';
+import 'chat_screen.dart';
+import 'connect_gateway_screen.dart';
+import 'local_installer_screen.dart';
+import 'logs_screen.dart';
+import 'office_preview_screen.dart';
 import 'termux_screen.dart';
 
 class QuickActionsScreen extends StatefulWidget {
   final bool showAdvanced;
   final GatewayService? gatewayService;
+  final VoidCallback? onOpenChat;
 
-  const QuickActionsScreen({super.key, this.showAdvanced = false, this.gatewayService});
+  const QuickActionsScreen({
+    super.key,
+    this.showAdvanced = false,
+    this.gatewayService,
+    this.onOpenChat,
+  });
 
   @override
   State<QuickActionsScreen> createState() => _QuickActionsScreenState();
 }
 
 class _QuickActionsScreenState extends State<QuickActionsScreen> {
-  // Track loading state for each action
   final Map<String, bool> _loadingActions = {};
-  final TermuxService _termuxService = TermuxService();
-  String? _openClawVersion;
+  final BackupService _backupService = BackupService();
+  final LocalMetricsService _localMetricsService = LocalMetricsService();
+
+  GatewayService? _service;
+  LocalMetrics? _lastMetrics;
+  LocalRuntimeStatus? _runtimeStatus;
+  Map<String, dynamic>? _connectionCheck;
 
   @override
   void initState() {
     super.initState();
-    _checkTermuxStatus();
+    _initializeContext();
   }
 
-  Future<void> _checkTermuxStatus() async {
-    await _termuxService.initialize();
+  @override
+  void didUpdateWidget(covariant QuickActionsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final gatewayChanged =
+        oldWidget.gatewayService?.baseUrl != widget.gatewayService?.baseUrl ||
+            oldWidget.gatewayService?.token != widget.gatewayService?.token;
+
+    if (gatewayChanged) {
+      _initializeContext();
+    }
+  }
+
+  @override
+  void dispose() {
+    _localMetricsService.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeContext() async {
+    final service = await _resolveGatewayService();
+    if (!mounted) return;
+
     setState(() {
-      _openClawVersion = _termuxService.openClawVersion;
+      _service = service;
     });
+
+    if (service != null) {
+      _localMetricsService.setGatewayUrl(service.baseUrl);
+    }
+
+    await _refreshOverview();
   }
 
-  void _navigateToTermux() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const TermuxScreen()),
+  Future<GatewayService?> _resolveGatewayService() async {
+    if (widget.gatewayService != null) {
+      return widget.gatewayService;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final gatewayUrl = prefs.getString('gateway_url');
+    if (gatewayUrl == null || gatewayUrl.isEmpty) {
+      return null;
+    }
+
+    return GatewayService(
+      baseUrl: gatewayUrl,
+      token: prefs.getString('gateway_token'),
     );
   }
 
-  void _executeAction(String actionName) async {
+  Future<void> _refreshOverview() async {
+    if (_service == null) {
+      if (mounted) {
+        setState(() {
+          _connectionCheck = null;
+          _lastMetrics = null;
+          _runtimeStatus = null;
+        });
+      }
+      return;
+    }
+
+    final connectionCheck = await _service!.checkConnection();
+    LocalMetrics? metrics;
+    LocalRuntimeStatus? runtimeStatus;
+
+    if (_isLocalGateway(_service!.baseUrl)) {
+      try {
+        metrics = await _localMetricsService.getMetrics(forceRefresh: true);
+      } catch (_) {
+        metrics = null;
+      }
+
+      try {
+        runtimeStatus = await _localMetricsService.getRuntimeStatus();
+      } catch (_) {
+        runtimeStatus = null;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _connectionCheck = connectionCheck;
+      _lastMetrics = metrics;
+      _runtimeStatus = runtimeStatus;
+    });
+  }
+
+  bool _isLocalGateway(String url) {
+    return url.contains('localhost') ||
+        url.contains('127.0.0.1') ||
+        url.startsWith('http://192.168.') ||
+        url.startsWith('http://10.') ||
+        url.startsWith('http://172.');
+  }
+
+  Future<void> _executeAction(String actionName) async {
     setState(() {
       _loadingActions[actionName] = true;
     });
 
-    // Handle Termux-based actions
-    if (actionName == 'termux_console') {
-      _navigateToTermux();
-      setState(() => _loadingActions[actionName] = false);
-      return;
-    }
-
-    if (actionName == 'install_openclaw') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+    try {
+      switch (actionName) {
+        case 'refresh_overview':
+          await _refreshOverview();
+          _showResult('Status refreshed');
+          break;
+        case 'test_gateway':
+          await _testGateway();
+          break;
+        case 'connect_gateway':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ConnectGatewayScreen(
+                onConnected: () {
+                  _initializeContext();
+                },
               ),
-              SizedBox(width: 12),
-              Text('Installing OpenClaw via Termux...'),
-            ],
-          ),
-          backgroundColor: Colors.blue,
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
-
-      final result = await _termuxService.installOpenClaw();
-      
-      setState(() {
-        _openClawVersion = _termuxService.openClawVersion;
-        _loadingActions[actionName] = false;
-      });
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(
-                result.success ? Icons.check_circle : Icons.error,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 12),
-              Text(result.success ? 'OpenClaw installed: $_openClawVersion' : 'Install failed: ${result.stderr}'),
-            ],
-          ),
-          backgroundColor: result.success ? Colors.green : Colors.red,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      return;
-    }
-
-    if (actionName == 'update_openclaw') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              ),
-              SizedBox(width: 12),
-              Text('Updating OpenClaw...'),
-            ],
-          ),
-          backgroundColor: Colors.blue,
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ),
-      );
-
-      final result = await _termuxService.updateOpenClaw();
-      
-      setState(() {
-        _openClawVersion = _termuxService.openClawVersion;
-        _loadingActions[actionName] = false;
-      });
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(
-                result.success ? Icons.check_circle : Icons.error,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 12),
-              Text(result.success ? 'Updated to: $_openClawVersion' : 'Update failed: ${result.stderr}'),
-            ],
-          ),
-          backgroundColor: result.success ? Colors.green : Colors.red,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      return;
-    }
-
-    if (actionName == 'setup_node') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              ),
-              SizedBox(width: 12),
-              Text('Setting up node...'),
-            ],
-          ),
-          backgroundColor: Colors.blue,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      final result = await _termuxService.setupNode();
-      
-      setState(() {
-        _loadingActions[actionName] = false;
-      });
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(
-                result.success ? Icons.check_circle : Icons.error,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 12),
-              Text(result.success ? 'Node setup complete!' : 'Setup failed: ${result.stderr}'),
-            ],
-          ),
-          backgroundColor: result.success ? Colors.green : Colors.red,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      return;
-    }
-
-    // Quick command execution
-    if (actionName.startsWith('cmd_')) {
-      final command = actionName.substring(4); // Remove 'cmd_' prefix
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              ),
-              const SizedBox(width: 12),
-              Text('Running: $command'),
-            ],
-          ),
-          backgroundColor: Colors.blue,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 1),
-        ),
-      );
-
-      final result = await _termuxService.runQuickCommand(command);
-      
-      setState(() {
-        _loadingActions[actionName] = false;
-      });
-
-      if (!mounted) return;
-
-      // Show result dialog
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(command),
-          content: SingleChildScrollView(
-            child: SelectableText(
-              result.output.isNotEmpty ? result.output : '(no output)',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+          );
+          break;
+        case 'open_logs':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const LogsScreen()),
+          );
+          break;
+        case 'restart_gateway':
+          await _restartGateway();
+          break;
+        case 'open_chat':
+          if (!mounted) break;
+          if (widget.onOpenChat != null) {
+            widget.onOpenChat!();
+          } else {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatScreen(gatewayService: _service),
+              ),
+            );
+          }
+          break;
+        case 'test_chat':
+          await _testChat();
+          break;
+        case 'boss_chat':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => BossChatScreen(gatewayService: _service),
             ),
-          ],
-        ),
-      );
+          );
+          break;
+        case 'agent_monitor':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  AgentMonitorScreen(gatewayService: _service),
+            ),
+          );
+          break;
+        case 'office_view':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  OfficePreviewScreen(gatewayService: _service),
+            ),
+          );
+          break;
+        case 'test_metrics':
+          await _testMetrics();
+          break;
+        case 'runtime_status':
+          if (!mounted) break;
+          await _refreshOverview();
+          if (!mounted) break;
+          _showRuntimeStatusSheet();
+          break;
+        case 'installer':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const LocalInstallerScreen(),
+            ),
+          );
+          await _refreshOverview();
+          break;
+        case 'termux_console':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const TermuxScreen()),
+          );
+          await _refreshOverview();
+          break;
+        case 'backup_now':
+          await _createBackup();
+          break;
+        case 'open_backups':
+          if (!mounted) break;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const BackupRestoreScreen(),
+            ),
+          );
+          break;
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingActions[actionName] = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _testGateway() async {
+    if (_service == null) {
+      _showResult('No gateway configured', isError: true);
       return;
     }
 
-    // Handle specific placeholder actions
-    if (actionName == 'agents_chat') {
-      setState(() {
-        _loadingActions[actionName] = false;
-      });
-      // Pop back to main screen - user can tap Chat tab
-      // This preserves the existing ChatScreen state and connection
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Tap Chat to continue'),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    // Default fallback for other actions (placeholder)
-    await Future.delayed(const Duration(milliseconds: 500));
-
+    final result = await _service!.checkConnection();
     if (!mounted) return;
 
     setState(() {
-      _loadingActions[actionName] = false;
+      _connectionCheck = result;
     });
 
-    // Show a more informative placeholder message
-    _showPlaceholderDialog(actionName);
+    _showResult(
+      result['success'] == true
+          ? 'Gateway reachable via ${result['endpoint']}'
+          : 'Gateway test failed: ${result['error']}',
+      isError: result['success'] != true,
+    );
   }
 
-  void _showPlaceholderDialog(String actionName) {
-    final actionDescriptions = {
-      'status': 'Check plant/system status - requires connected sensors',
-      'photo': 'Capture photo from camera - requires camera permission',
-      'analyze': 'Analyze plant health using AI - requires photo first',
-      'alerts': 'Configure alert notifications - requires gateway connection',
-      'backup': 'Create system backup - requires storage permission',
-      'restart': 'Restart OpenClaw services - requires Termux',
-      'kanban': 'Open KANBAN board - feature coming soon',
-      'config': 'Edit configuration files - requires Termux',
-      'weather_current': 'Get current weather from weather service',
-      'weather_storm': 'Check for storm alerts - requires weather API',
-      'weather_forecast': 'Get weather forecast - requires weather API',
-      'agents_research': 'Spawn research agent - requires gateway connection',
-      'agents_code': 'Spawn coding agent - requires gateway connection',
-      'connect_gateway': 'Connect to OpenClaw gateway',
-      'guided_setup': 'Run guided setup wizard',
-    };
+  Future<void> _restartGateway() async {
+    if (_service == null) {
+      _showResult('No gateway configured', isError: true);
+      return;
+    }
 
-    final description = actionDescriptions[actionName] ?? 'Feature coming soon!';
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restart Gateway'),
+        content: const Text(
+          'This will briefly disconnect active sessions. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restart'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final result =
+        await _service!.restartGateway('Manual restart from control hub');
+    await _refreshOverview();
+    _showResult(
+      result?['success'] == true
+          ? 'Gateway restart requested'
+          : 'Restart failed',
+      isError: result?['success'] != true,
+    );
+  }
+
+  Future<void> _testChat() async {
+    if (_service == null) {
+      _showResult('No gateway configured', isError: true);
+      return;
+    }
+
+    final agents = await _service!.getAgents();
+    if (agents == null || agents.isEmpty) {
+      _showResult('No active sessions found for chat', isError: true);
+      return;
+    }
+
+    final target = agents.firstWhere(
+      (agent) => !agent.isSubagent && agent.key.isNotEmpty,
+      orElse: () => agents.first,
+    );
+
+    final history = await _service!.getChatHistory(target.key, limit: 5);
+    _showResult(
+      history != null
+          ? 'Chat session "${target.name}" responded with ${history.length} message(s)'
+          : 'Chat history unavailable',
+      isError: history == null,
+    );
+  }
+
+  Future<void> _testMetrics() async {
+    if (_service == null || !_isLocalGateway(_service!.baseUrl)) {
+      _showResult('Local metrics only apply to local or LAN runtimes',
+          isError: true);
+      return;
+    }
+
+    try {
+      final metrics = await _localMetricsService.getMetrics(forceRefresh: true);
+      final runtime = await _localMetricsService.getRuntimeStatus();
+
+      if (!mounted) return;
+      setState(() {
+        _lastMetrics = metrics;
+        _runtimeStatus = runtime;
+      });
+
+      _showResult(
+        metrics.isAvailable
+            ? 'Metrics OK via ${metrics.source ?? 'unknown'}'
+            : metrics.error ?? 'Metrics unavailable',
+        isError: !metrics.isAvailable,
+      );
+    } catch (e) {
+      _showResult('Metrics test failed: $e', isError: true);
+    }
+  }
+
+  Future<void> _createBackup() async {
+    final success = await _backupService.backup();
+    _showResult(
+      success
+          ? 'Backup created successfully'
+          : 'Backup failed: ${_backupService.lastError}',
+      isError: !success,
+    );
+  }
+
+  void _showRuntimeStatusSheet() {
+    final runtime = _runtimeStatus;
+    if (runtime == null) {
+      _showResult('Runtime status is not available', isError: true);
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Local Runtime Status',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 16),
+              _buildRuntimeRow(
+                'Gateway',
+                runtime.gatewayRunning,
+                runtime.gatewayLatencyMs != null
+                    ? '${runtime.gatewayLatencyMs}ms'
+                    : runtime.gatewayError ?? 'Unavailable',
+              ),
+              _buildRuntimeRow(
+                'Metrics Helper',
+                runtime.helperRunning,
+                runtime.helperLatencyMs != null
+                    ? '${runtime.helperLatencyMs}ms'
+                    : runtime.helperError ?? 'Not running',
+              ),
+              _buildRuntimeRow(
+                'Termux',
+                runtime.termuxInstalled,
+                runtime.termuxInstalled ? 'Installed' : 'Missing',
+              ),
+              _buildRuntimeRow(
+                'Termux API',
+                runtime.termuxApiInstalled,
+                runtime.termuxApiInstalled ? 'Installed' : 'Missing',
+              ),
+              _buildRuntimeRow(
+                'RUN_COMMAND',
+                runtime.runCommandPermissionGranted,
+                runtime.runCommandPermissionGranted
+                    ? 'Granted'
+                    : 'Grant in app settings',
+              ),
+              if (runtime.readiness != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  runtime.readiness!.readinessText,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _executeAction('termux_console');
+                      },
+                      icon: const Icon(Icons.terminal),
+                      label: const Text('Termux'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _executeAction('installer');
+                      },
+                      icon: const Icon(Icons.build_circle_outlined),
+                      label: const Text('Repair'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showResult(String message, {bool isError = false}) {
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.info_outline, color: Colors.white),
-                const SizedBox(width: 8),
-                Text(actionName.replaceAll('_', ' ').toUpperCase()),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              description,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-        backgroundColor: Colors.blue.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-        margin: const EdgeInsets.all(16),
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
       ),
     );
   }
@@ -336,84 +509,56 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Quick Actions'),
+        title: const Text('Control Hub'),
         centerTitle: true,
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          _buildOverviewCard(),
+          const SizedBox(height: 16),
           _buildCategory(
-            '🌿 GROW',
-            Icons.eco,
+            'GATEWAY',
+            Icons.router,
             [
-              _ActionItem('Status', Icons.info_outline, 'status'),
-              _ActionItem('Photo', Icons.camera_alt, 'photo'),
-              _ActionItem('Analyze', Icons.analytics, 'analyze'),
-              _ActionItem('Alerts', Icons.notifications_active, 'alerts'),
+              _ActionItem('Refresh', Icons.refresh, 'refresh_overview'),
+              _ActionItem('Test Gateway', Icons.wifi_tethering, 'test_gateway'),
+              _ActionItem('Connect', Icons.link, 'connect_gateway'),
+              _ActionItem('Restart', Icons.restart_alt, 'restart_gateway'),
+              _ActionItem('Logs', Icons.subject, 'open_logs'),
             ],
           ),
           const SizedBox(height: 16),
           _buildCategory(
-            '🛠️ SYSTEM',
-            Icons.build,
-            [
-              _ActionItem('Backup', Icons.backup, 'backup'),
-              _ActionItem('Restart', Icons.refresh, 'restart'),
-              _ActionItem('Update OpenClaw', Icons.system_update, 'update_openclaw'),
-              _ActionItem('KANBAN', Icons.view_kanban, 'kanban'),
-              _ActionItem('Config', Icons.settings_applications, 'config'),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildCategory(
-            '🌤️ WEATHER',
-            Icons.wb_sunny,
-            [
-              _ActionItem('Current', Icons.thermostat, 'weather_current'),
-              _ActionItem('Storm', Icons.thunderstorm, 'weather_storm'),
-              _ActionItem('Forecast', Icons.calendar_month, 'weather_forecast'),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildCategory(
-            '🤖 AGENTS',
+            'CHAT & AGENTS',
             Icons.smart_toy,
             [
-              _ActionItem('Chat', Icons.chat, 'agents_chat'),
-              _ActionItem('Research', Icons.search, 'agents_research'),
-              _ActionItem('Code', Icons.code, 'agents_code'),
+              _ActionItem('Open Chat', Icons.chat, 'open_chat'),
+              _ActionItem('Test Chat', Icons.mark_chat_read, 'test_chat'),
+              _ActionItem('Boss Chat', Icons.campaign, 'boss_chat'),
+              _ActionItem('Monitor', Icons.monitor_heart, 'agent_monitor'),
+              if (widget.showAdvanced)
+                _ActionItem('Office View', Icons.apartment, 'office_view'),
             ],
           ),
           const SizedBox(height: 16),
           _buildCategory(
-            '📱 TERMUX',
-            Icons.terminal,
+            'LOCAL RUNTIME',
+            Icons.developer_mode,
             [
-              _ActionItem('Console', Icons.terminal, 'termux_console'),
-              _ActionItem('Install OpenClaw', Icons.download, 'install_openclaw'),
-              _ActionItem('Update OpenClaw', Icons.system_update, 'update_openclaw'),
-              _ActionItem('Setup Node', Icons.computer, 'setup_node'),
+              _ActionItem('Test Metrics', Icons.memory, 'test_metrics'),
+              _ActionItem('Status', Icons.health_and_safety, 'runtime_status'),
+              _ActionItem('Repair', Icons.build_circle_outlined, 'installer'),
+              _ActionItem('Termux', Icons.terminal, 'termux_console'),
             ],
           ),
           const SizedBox(height: 16),
           _buildCategory(
-            '⚡ QUICK COMMANDS',
-            Icons.flash_on,
+            'DATA',
+            Icons.backup,
             [
-              _ActionItem('openclaw status', Icons.info_outline, 'cmd_openclaw status'),
-              _ActionItem('gateway restart', Icons.refresh, 'cmd_openclaw gateway restart'),
-              _ActionItem('nodes status', Icons.hub, 'cmd_openclaw nodes status'),
-              _ActionItem('gateway start', Icons.play_arrow, 'cmd_openclaw gateway start'),
-              _ActionItem('gateway stop', Icons.stop, 'cmd_openclaw gateway stop'),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _buildCategory(
-            '⚙️ SETUP',
-            Icons.settings,
-            [
-              _ActionItem('Connect Gateway', Icons.wifi_tethering, 'connect_gateway'),
-              _ActionItem('Guided Setup', Icons.auto_fix_high, 'guided_setup'),
+              _ActionItem('Backup Now', Icons.backup, 'backup_now'),
+              _ActionItem('Backups', Icons.restore, 'open_backups'),
             ],
           ),
         ],
@@ -421,7 +566,78 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
     );
   }
 
-  Widget _buildCategory(String title, IconData icon, List<_ActionItem> actions) {
+  Widget _buildOverviewCard() {
+    final gatewayOk = _connectionCheck?['success'] == true;
+    final metricsOk = _lastMetrics?.isAvailable == true;
+    final helperOk = _runtimeStatus?.helperRunning == true;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Live Status',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _service?.baseUrl ?? 'No gateway configured',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildStatusPill(
+                  gatewayOk ? 'Gateway connected' : 'Gateway offline',
+                  gatewayOk ? Colors.green : Colors.red,
+                ),
+                _buildStatusPill(
+                  metricsOk
+                      ? 'Metrics: ${_lastMetrics!.source ?? 'unknown'}'
+                      : (_service != null && _isLocalGateway(_service!.baseUrl)
+                          ? 'Metrics unavailable'
+                          : 'Remote runtime'),
+                  metricsOk ? Colors.blue : Colors.orange,
+                ),
+                if (_runtimeStatus != null)
+                  _buildStatusPill(
+                    helperOk ? 'Helper running' : 'Helper missing',
+                    helperOk ? Colors.green : Colors.orange,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusPill(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategory(
+      String title, IconData icon, List<_ActionItem> actions) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -435,8 +651,8 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
                 Text(
                   title,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ],
             ),
@@ -446,7 +662,7 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 2,
-                childAspectRatio: 2.5,
+                childAspectRatio: 2.7,
                 crossAxisSpacing: 8,
                 mainAxisSpacing: 8,
               ),
@@ -463,6 +679,28 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildRuntimeRow(String label, bool ok, String detail) {
+    final color = ok ? Colors.green : Colors.orange;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Icon(ok ? Icons.check_circle : Icons.error_outline, color: color),
+          const SizedBox(width: 12),
+          Expanded(child: Text(label)),
+          Flexible(
+            child: Text(
+              detail,
+              textAlign: TextAlign.end,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
       ),
     );
   }

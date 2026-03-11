@@ -67,32 +67,42 @@ class AgentSession {
   });
 
   factory AgentSession.fromJson(Map<String, dynamic> json) {
+    final key = json['key'] ??
+        json['session_key'] ??
+        json['sessionKey'] ??
+        json['id'] ??
+        json['sessionId'] ??
+        '';
+    final status = (json['status'] ?? json['agentStatus'] ?? '').toString();
+    final kind = (json['kind'] ?? '').toString();
+
     return AgentSession(
-      id: json['id'] ?? json['sessionId'] ?? '',
-      key: json['key'] ?? '',
-      name: json['name'] ?? 'Unknown',
+      id: json['id'] ?? json['sessionId'] ?? key,
+      key: key,
+      name: json['name'] ?? json['agent'] ?? json['displayName'] ?? 'Unknown',
       emoji: json['emoji'],
       modelProvider: json['modelProvider'],
       model: json['model'] ?? 'unknown',
       inputTokens: json['inputTokens'] ?? 0,
       outputTokens: json['outputTokens'] ?? 0,
-      totalTokens: json['totalTokens'] ?? 0,
+      totalTokens: json['totalTokens'] ?? json['total_tokens'] ?? 0,
       usageKnown: json['usageKnown'] ?? false,
       contextTokens: json['contextTokens'] ?? 0,
       channel: json['channel'] ?? 'default',
-      kind: json['kind'] ?? 'unknown',
+      kind: kind.isNotEmpty ? kind : 'unknown',
       label: json['label'],
       displayName: json['displayName'],
       derivedTitle: json['derivedTitle'],
-      lastMessagePreview: json['lastMessagePreview'],
+      lastMessagePreview: json['lastMessagePreview'] ?? json['latest_message'],
       chatStatus: json['chatStatus'],
       agentStatus: json['agentStatus'],
       agentEventData: json['agentEventData'],
       currentToolName: json['currentToolName'],
       currentToolPhase: json['currentToolPhase'],
       statusSummary: json['statusSummary'],
-      isActive: json['isActive'] ?? false,
-      isSubagent: json['isSubagent'] ?? false,
+      isActive: json['isActive'] ?? status == 'active' || status == 'busy',
+      isSubagent: json['isSubagent'] ??
+          kind == 'subagent' || key.toString().contains(':subagent:'),
       lastActivity: json['lastActivity'] != null
           ? DateTime.tryParse(json['lastActivity'].toString())
           : null,
@@ -109,38 +119,38 @@ class AgentSession {
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'key': key,
-    'name': name,
-    'emoji': emoji,
-    'modelProvider': modelProvider,
-    'model': model,
-    'inputTokens': inputTokens,
-    'outputTokens': outputTokens,
-    'totalTokens': totalTokens,
-    'usageKnown': usageKnown,
-    'contextTokens': contextTokens,
-    'channel': channel,
-    'kind': kind,
-    'label': label,
-    'displayName': displayName,
-    'derivedTitle': derivedTitle,
-    'lastMessagePreview': lastMessagePreview,
-    'chatStatus': chatStatus,
-    'agentStatus': agentStatus,
-    'agentEventData': agentEventData,
-    'currentToolName': currentToolName,
-    'currentToolPhase': currentToolPhase,
-    'statusSummary': statusSummary,
-    'isActive': isActive,
-    'isSubagent': isSubagent,
-    'lastActivity': lastActivity?.toIso8601String(),
-    'updatedAt': updatedAt?.toIso8601String(),
-    'aborted': aborted,
-    'avatarUrl': avatarUrl,
-    'identityTheme': identityTheme,
-    'subagentIds': subagentIds,
-  };
+        'id': id,
+        'key': key,
+        'name': name,
+        'emoji': emoji,
+        'modelProvider': modelProvider,
+        'model': model,
+        'inputTokens': inputTokens,
+        'outputTokens': outputTokens,
+        'totalTokens': totalTokens,
+        'usageKnown': usageKnown,
+        'contextTokens': contextTokens,
+        'channel': channel,
+        'kind': kind,
+        'label': label,
+        'displayName': displayName,
+        'derivedTitle': derivedTitle,
+        'lastMessagePreview': lastMessagePreview,
+        'chatStatus': chatStatus,
+        'agentStatus': agentStatus,
+        'agentEventData': agentEventData,
+        'currentToolName': currentToolName,
+        'currentToolPhase': currentToolPhase,
+        'statusSummary': statusSummary,
+        'isActive': isActive,
+        'isSubagent': isSubagent,
+        'lastActivity': lastActivity?.toIso8601String(),
+        'updatedAt': updatedAt?.toIso8601String(),
+        'aborted': aborted,
+        'avatarUrl': avatarUrl,
+        'identityTheme': identityTheme,
+        'subagentIds': subagentIds,
+      };
 
   /// Get status display text
   String get statusDisplay {

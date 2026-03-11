@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/agent_personality.dart';
 import '../models/inline_widget.dart';
 import '../data/agency_agents.dart';
@@ -27,21 +28,21 @@ class ChatMsg {
   final AgentPersonality? agent;
   final bool isError;
   final bool isSending;
-  
+
   /// Weather widget data for inline display
   final WeatherWidgetData? weatherWidget;
   final bool showWeatherForecast;
   final bool isNight;
-  
+
   /// Chart widget data for inline display (from agent_chart_tool.dart)
   final InlineChartData? chartWidget;
-  
+
   /// Info card widget data for inline display
   final InfoCardWidgetData? infoCardWidget;
-  
+
   /// Status widget data for inline display
   final StatusWidgetData? statusWidget;
-  
+
   /// Generic inline widget data
   final InlineWidgetData? inlineWidget;
 
@@ -61,24 +62,24 @@ class ChatMsg {
     this.statusWidget,
     this.inlineWidget,
   });
-  
+
   /// Check if this message has a weather widget
   bool get hasWeatherWidget => weatherWidget != null;
-  
+
   /// Check if this message has a chart widget
   bool get hasChartWidget => chartWidget != null;
-  
+
   /// Check if this message has an info card widget
   bool get hasInfoCardWidget => infoCardWidget != null;
-  
+
   /// Check if this message has a status widget
   bool get hasStatusWidget => statusWidget != null;
-  
+
   /// Check if this message has any inline widget
-  bool get hasInlineWidget => 
-      hasWeatherWidget || 
-      hasChartWidget || 
-      hasInfoCardWidget || 
+  bool get hasInlineWidget =>
+      hasWeatherWidget ||
+      hasChartWidget ||
+      hasInfoCardWidget ||
       hasStatusWidget ||
       inlineWidget != null;
 }
@@ -97,18 +98,18 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMsg> _messages = [];
-  
+
   // Chat service
   ChatService? _chatService;
   StreamSubscription? _messagesSubscription;
   StreamSubscription? _statusSubscription;
   StreamSubscription? _typingSubscription;
-  
+
   // UI state
   bool _isConnected = false;
   bool _isTyping = false;
   String _connectionError = '';
-  
+
   // Agent state
   AgentPersonality? _activeAgent;
   List<AgentPersonality> _multiAgentTeam = [];
@@ -117,56 +118,117 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _initChatService();
     _addWelcomeMessage();
+    unawaited(_initializeChatService());
   }
-  
-  void _initChatService() {
-    if (widget.gatewayService != null) {
-      _chatService = ChatService(gatewayService: widget.gatewayService!);
-      
-      // Listen for messages
-      _messagesSubscription = _chatService!.messagesStream.listen((messages) {
-        _syncMessagesFromService(messages);
-      });
-      
-      // Listen for status changes
-      _statusSubscription = _chatService!.statusStream.listen((status) {
-        setState(() {
-          _isConnected = status == ChatStatus.connected;
-          if (status == ChatStatus.error) {
-            _connectionError = 'Connection error';
-          } else {
-            _connectionError = '';
-          }
-        });
-      });
-      
-      // Listen for typing indicator
-      _typingSubscription = _chatService!.typingStream.listen((isTyping) {
-        setState(() {
-          _isTyping = isTyping;
-        });
-      });
-      
-      // Check if already connected (singleton may have existing connection)
-      if (_chatService!.isConnected) {
-        debugPrint('✅ ChatService already connected');
-        setState(() {
-          _isConnected = true;
-        });
-        // Sync existing messages
-        _syncMessagesFromService(_chatService!.messages);
-      } else {
-        // Connect to gateway if not connected
-        _connectToGateway();
-      }
+
+  @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final gatewayChanged =
+        oldWidget.gatewayService?.baseUrl != widget.gatewayService?.baseUrl ||
+            oldWidget.gatewayService?.token != widget.gatewayService?.token;
+
+    if (gatewayChanged) {
+      unawaited(_initializeChatService(forceRebind: true));
     }
   }
-  
+
+  Future<void> _initializeChatService({bool forceRebind = false}) async {
+    final gatewayService = await _resolveGatewayService();
+    if (!mounted) return;
+
+    if (gatewayService == null) {
+      setState(() {
+        _isConnected = false;
+        _connectionError = 'No gateway configured';
+      });
+      return;
+    }
+
+    final current = _chatService;
+    final serviceChanged = current == null ||
+        current.baseUrl != gatewayService.baseUrl ||
+        current.token != gatewayService.token;
+
+    if (forceRebind || serviceChanged) {
+      await _disposeChatService();
+      _bindChatService(gatewayService);
+    }
+
+    if (_chatService == null) return;
+
+    if (_chatService!.messages.isNotEmpty) {
+      _syncMessagesFromService(_chatService!.messages);
+    }
+
+    if (_chatService!.isConnected) {
+      setState(() {
+        _isConnected = true;
+        _connectionError = '';
+      });
+      return;
+    }
+
+    await _connectToGateway();
+  }
+
+  Future<GatewayService?> _resolveGatewayService() async {
+    if (widget.gatewayService != null) {
+      return widget.gatewayService;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final gatewayUrl = prefs.getString('gateway_url');
+    if (gatewayUrl == null || gatewayUrl.isEmpty) {
+      return null;
+    }
+
+    return GatewayService(
+      baseUrl: gatewayUrl,
+      token: prefs.getString('gateway_token'),
+    );
+  }
+
+  void _bindChatService(GatewayService gatewayService) {
+    _chatService = ChatService(gatewayService: gatewayService);
+
+    _messagesSubscription = _chatService!.messagesStream.listen((messages) {
+      _syncMessagesFromService(messages);
+    });
+
+    _statusSubscription = _chatService!.statusStream.listen((status) {
+      if (!mounted) return;
+      setState(() {
+        _isConnected = status == ChatStatus.connected;
+        _connectionError = status == ChatStatus.error ? 'Connection error' : '';
+      });
+    });
+
+    _typingSubscription = _chatService!.typingStream.listen((isTyping) {
+      if (!mounted) return;
+      setState(() {
+        _isTyping = isTyping;
+      });
+    });
+  }
+
+  Future<void> _disposeChatService() async {
+    await _messagesSubscription?.cancel();
+    await _statusSubscription?.cancel();
+    await _typingSubscription?.cancel();
+    _messagesSubscription = null;
+    _statusSubscription = null;
+    _typingSubscription = null;
+
+    await _chatService?.dispose();
+    _chatService = null;
+  }
+
   Future<void> _connectToGateway() async {
     if (_chatService == null) return;
-    
+
     try {
       await _chatService!.connect();
       debugPrint('✅ Connected to gateway');
@@ -177,15 +239,19 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
   }
-  
+
   void _syncMessagesFromService(List<ChatMessageUI> serviceMessages) {
-    // Smart merge: only update changed messages, preserve local state
-    final existingIds = _messages.map((m) => m.id).toSet();
     final serviceIds = serviceMessages.map((m) => m.id).toSet();
-    
-    // Remove messages that no longer exist in service
-    _messages.removeWhere((m) => !serviceIds.contains(m.id));
-    
+    final existingIds = _messages.map((m) => m.id).toSet();
+
+    // Remove service-owned messages that no longer exist in service, but keep local UI-only notices.
+    _messages.removeWhere(
+      (m) =>
+          !serviceIds.contains(m.id) &&
+          m.id != 'welcome' &&
+          !m.id.startsWith('local_'),
+    );
+
     // Add new messages from service
     for (final msg in serviceMessages) {
       if (!existingIds.contains(msg.id)) {
@@ -225,11 +291,11 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
     }
-    
+
     setState(() {});
     _scrollToBottom();
   }
-  
+
   AgentPersonality? _getAgentByName(String name) {
     try {
       return AgencyAgentsData.allAgents.firstWhere(
@@ -239,11 +305,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return null;
     }
   }
-  
+
   void _addWelcomeMessage() {
+    if (_messages.any((m) => m.id == 'welcome')) return;
+
     _messages.add(ChatMsg(
       id: 'welcome',
-      content: '👋 Hello! I\'m DuckBot. How can I help you today?\n\n💡 Tip: Type "agent" or tap the agent icon to switch to a specialized agent mode!',
+      content:
+          '👋 Hello! I\'m DuckBot. How can I help you today?\n\n💡 Tip: Type "agent" or tap the agent icon to switch to a specialized agent mode!',
       isUser: false,
       timestamp: DateTime.now(),
     ));
@@ -253,12 +322,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
-    // Cancel subscriptions but don't dispose ChatService singleton
-    // The service persists across navigation to maintain connection
-    _messagesSubscription?.cancel();
-    _statusSubscription?.cancel();
-    _typingSubscription?.cancel();
-    // Don't call _chatService?.dispose() - it's a singleton that should persist
+    unawaited(_disposeChatService());
     super.dispose();
   }
 
@@ -268,8 +332,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _isMultiAgentMode = false;
       _multiAgentTeam.clear();
     });
-    
-    _addSystemMessage('🤖 Agent activated: ${agent.emoji} ${agent.name}\n${agent.greeting}');
+
+    _addSystemMessage(
+        '🤖 Agent activated: ${agent.emoji} ${agent.name}\n${agent.greeting}');
   }
 
   void _activateMultiAgentMode(List<AgentPersonality> agents) {
@@ -278,9 +343,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _multiAgentTeam = agents;
       _activeAgent = null;
     });
-    
+
     final agentNames = agents.map((a) => '${a.emoji} ${a.name}').join(', ');
-    _addSystemMessage('🎭 Multi-agent team activated!\n$agentNames\n\nReady to tackle your task with ${agents.length} specialists!');
+    _addSystemMessage(
+        '🎭 Multi-agent team activated!\n$agentNames\n\nReady to tackle your task with ${agents.length} specialists!');
   }
 
   void _deactivateAgent() {
@@ -289,14 +355,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _isMultiAgentMode = false;
       _multiAgentTeam.clear();
     });
-    
-    _addSystemMessage('👋 Agent mode deactivated. I\'m back to default DuckBot!');
+
+    _addSystemMessage(
+        '👋 Agent mode deactivated. I\'m back to default DuckBot!');
   }
 
   void _addSystemMessage(String content) {
     setState(() {
       _messages.add(ChatMsg(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        id: 'local_${DateTime.now().millisecondsSinceEpoch}',
         content: content,
         isUser: false,
         timestamp: DateTime.now(),
@@ -313,85 +380,29 @@ class _ChatScreenState extends State<ChatScreen> {
     // Clear input immediately
     _messageController.clear();
 
-    // Add user message to UI immediately (optimistic update)
-    final userMessageId = 'user_${DateTime.now().millisecondsSinceEpoch}';
-    final userMessage = ChatMsg(
-      id: userMessageId,
-      content: text,
-      isUser: true,
-      timestamp: DateTime.now(),
-      isSending: true,
-    );
-
-    setState(() {
-      _messages.add(userMessage);
-    });
-
-    _scrollToBottom();
-
     // Send via chat service if available
-    if (_chatService != null && _isConnected) {
+    if (_chatService != null) {
       // Set up timeout for send operation
       final sendFuture = _chatService!.sendMessage(text);
-      
+
       // 30 second timeout for send
       sendFuture.timeout(const Duration(seconds: 30), onTimeout: () {
         debugPrint('⏱️ Send timeout');
         if (!mounted) return false;
-        
-        setState(() {
-          final index = _messages.indexWhere((m) => m.id == userMessageId);
-          if (index != -1) {
-            _messages[index] = ChatMsg(
-              id: userMessageId,
-              content: text,
-              isUser: true,
-              timestamp: DateTime.now(),
-              isError: true,
-            );
-          }
-        });
-        
-        _addSystemMessage('⚠️ Message send timed out. Please check your connection and try again.');
+
+        _addSystemMessage(
+            '⚠️ Message send timed out. Please check your connection and try again.');
         return false;
       }).then((success) {
         if (!mounted) return;
-        
+
         if (!success) {
-          // Show error
-          setState(() {
-            final index = _messages.indexWhere((m) => m.id == userMessageId);
-            if (index != -1) {
-              _messages[index] = ChatMsg(
-                id: userMessageId,
-                content: text,
-                isUser: true,
-                timestamp: DateTime.now(),
-                isError: true,
-              );
-            }
-          });
+          _addSystemMessage(
+              '⚠️ Message failed to send. Please check your connection and try again.');
         }
       });
     } else {
-      // No connection - show error after a short delay
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (!mounted) return;
-        
-        setState(() {
-          final index = _messages.indexWhere((m) => m.id == userMessageId);
-          if (index != -1) {
-            _messages[index] = ChatMsg(
-              id: userMessageId,
-              content: text,
-              isUser: true,
-              timestamp: DateTime.now(),
-              isError: true,
-            );
-          }
-        });
-        _scrollToBottom();
-      });
+      _addSystemMessage('⚠️ Connect to a gateway before sending a message.');
     }
   }
 
@@ -441,7 +452,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-  
+
   void _showTemplates() async {
     await Navigator.push(
       context,
@@ -459,14 +470,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   List<ExportMessage> _getExportMessages() {
-    return _messages.map((m) => ExportMessage(
-      id: m.id,
-      content: m.content,
-      isUser: m.isUser,
-      timestamp: m.timestamp,
-      agentName: m.agent?.name,
-      agentEmoji: m.agent?.emoji,
-    )).toList();
+    return _messages
+        .map((m) => ExportMessage(
+              id: m.id,
+              content: m.content,
+              isUser: m.isUser,
+              timestamp: m.timestamp,
+              agentName: m.agent?.name,
+              agentEmoji: m.agent?.emoji,
+            ))
+        .toList();
   }
 
   void _showExportSheet() {
@@ -476,7 +489,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    
+
     ExportBottomSheet.show(
       context,
       messages: _getExportMessages(),
@@ -507,7 +520,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isConnected && _connectionError.isEmpty) {
       return const SizedBox.shrink(); // Don't show anything when connected
     }
-    
+
     // Error state - show actionable banner
     if (_connectionError.isNotEmpty) {
       return Container(
@@ -539,7 +552,8 @@ class _ChatScreenState extends State<ChatScreen> {
               onPressed: _connectToGateway,
               style: TextButton.styleFrom(
                 foregroundColor: Colors.red.shade700,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
@@ -549,7 +563,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
-    
+
     // Connecting state - show compact indicator
     return Container(
       width: double.infinity,
@@ -602,7 +616,8 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(width: 6),
               Text(
                 '${_multiAgentTeam.length} agents',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               ),
               const SizedBox(width: 4),
               const Icon(Icons.expand_more, size: 16),
@@ -611,7 +626,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
-    
+
     if (_activeAgent != null) {
       return GestureDetector(
         onTap: () => _showAgentDetail(_activeAgent!),
@@ -641,7 +656,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
-    
+
     return const SizedBox.shrink();
   }
 
@@ -654,7 +669,8 @@ class _ChatScreenState extends State<ChatScreen> {
             const Text('🦆 '),
             const Text('DuckBot'),
             const SizedBox(width: 8),
-            if (_activeAgent != null || _isMultiAgentMode) _buildAgentIndicator(),
+            if (_activeAgent != null || _isMultiAgentMode)
+              _buildAgentIndicator(),
             const Spacer(),
             // Connection indicator
             Icon(
@@ -703,14 +719,14 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           // Connection status
           _buildConnectionStatus(),
-          
+
           // Active agent banner
           if (_activeAgent != null || _isMultiAgentMode)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: _activeAgent?.division.color.withValues(alpha: 0.1) ?? 
-                     Colors.purple.withValues(alpha: 0.1),
+              color: _activeAgent?.division.color.withValues(alpha: 0.1) ??
+                  Colors.purple.withValues(alpha: 0.1),
               child: Row(
                 children: [
                   if (_isMultiAgentMode) ...[
@@ -724,7 +740,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   ] else if (_activeAgent != null) ...[
-                    Text(_activeAgent!.emoji, style: const TextStyle(fontSize: 20)),
+                    Text(_activeAgent!.emoji,
+                        style: const TextStyle(fontSize: 20)),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
@@ -755,7 +772,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
-          
+
           // Typing indicator
           if (_isTyping)
             Container(
@@ -770,7 +787,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _activeAgent != null 
+                    _activeAgent != null
                         ? '${_activeAgent!.name} is typing...'
                         : 'DuckBot is typing...',
                     style: TextStyle(
@@ -782,7 +799,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
-          
+
           // Messages list
           Expanded(
             child: ListView.builder(
@@ -795,7 +812,7 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-          
+
           // Input area - compact design for small screens
           Container(
             decoration: BoxDecoration(
@@ -849,7 +866,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: _activeAgent?.division.color,
                           ),
                           title: const Text('Select Agent'),
-                          subtitle: _activeAgent != null 
+                          subtitle: _activeAgent != null
                               ? Text('Active: ${_activeAgent!.name}')
                               : null,
                           contentPadding: EdgeInsets.zero,
@@ -875,20 +892,22 @@ class _ChatScreenState extends State<ChatScreen> {
                       const PopupMenuItem(
                         value: 'clear',
                         child: ListTile(
-                          leading: Icon(Icons.delete_outline, color: Colors.red),
-                          title: Text('Clear Chat', style: TextStyle(color: Colors.red)),
+                          leading:
+                              Icon(Icons.delete_outline, color: Colors.red),
+                          title: Text('Clear Chat',
+                              style: TextStyle(color: Colors.red)),
                           contentPadding: EdgeInsets.zero,
                         ),
                       ),
                     ],
                   ),
-                  
+
                   // Text input field
                   Expanded(
                     child: TextField(
                       controller: _messageController,
                       decoration: InputDecoration(
-                        hintText: _activeAgent != null 
+                        hintText: _activeAgent != null
                             ? 'Chat with ${_activeAgent!.name}...'
                             : _isMultiAgentMode
                                 ? 'Chat with ${_multiAgentTeam.length} agents...'
@@ -898,18 +917,24 @@ class _ChatScreenState extends State<ChatScreen> {
                           borderSide: BorderSide.none,
                         ),
                         filled: true,
-                        fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(24),
                           borderSide: BorderSide(
-                            color: _isConnected ? Colors.transparent : Colors.orange.shade300,
+                            color: _isConnected
+                                ? Colors.transparent
+                                : Colors.orange.shade300,
                             width: _isConnected ? 0 : 2,
                           ),
                         ),
                         // Show connection hint when disconnected
-                        suffixIcon: !_isConnected 
-                            ? Icon(Icons.cloud_off, size: 18, color: Colors.orange.shade400)
+                        suffixIcon: !_isConnected
+                            ? Icon(Icons.cloud_off,
+                                size: 18, color: Colors.orange.shade400)
                             : null,
                       ),
                       textInputAction: TextInputAction.send,
@@ -919,32 +944,39 @@ class _ChatScreenState extends State<ChatScreen> {
                       enabled: _isConnected,
                     ),
                   ),
-                  
+
                   const SizedBox(width: 8),
-                  
+
                   // Send button with state management
                   Container(
                     height: 48,
                     width: 48,
                     decoration: BoxDecoration(
-                      color: _isConnected 
+                      color: _isConnected
                           ? Theme.of(context).colorScheme.primary
                           : Colors.grey.shade400,
                       shape: BoxShape.circle,
-                      boxShadow: _isConnected ? [
-                        BoxShadow(
-                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ] : null,
+                      boxShadow: _isConnected
+                          ? [
+                              BoxShadow(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                          : null,
                     ),
                     child: IconButton(
                       icon: Icon(
                         _isConnected ? Icons.send : Icons.cloud_off,
                         color: Colors.white,
                       ),
-                      onPressed: _isConnected ? _sendMessage : () => _connectToGateway(),
+                      onPressed: _isConnected
+                          ? _sendMessage
+                          : () => _connectToGateway(),
                       tooltip: _isConnected ? 'Send' : 'Reconnect',
                       iconSize: 22,
                     ),
@@ -961,20 +993,22 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildMessageBubble(ChatMsg message) {
     final isUser = message.isUser;
     final colorScheme = Theme.of(context).colorScheme;
-    
+
     final showAgentBadge = !isUser && message.agent != null;
     final hasInlineWidget = message.hasInlineWidget;
-    
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
             CircleAvatar(
               radius: 18,
-              backgroundColor: message.agent?.division.color ?? const Color(0xFF00D4AA),
+              backgroundColor:
+                  message.agent?.division.color ?? const Color(0xFF00D4AA),
               child: Text(
                 message.agent?.emoji ?? '🦆',
                 style: const TextStyle(fontSize: 18),
@@ -984,7 +1018,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
           Flexible(
             child: Column(
-              crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
                 if (showAgentBadge)
                   Padding(
@@ -1000,15 +1035,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 Container(
                   constraints: BoxConstraints(
-                    maxWidth: hasInlineWidget 
+                    maxWidth: hasInlineWidget
                         ? MediaQuery.of(context).size.width * 0.85
                         : MediaQuery.of(context).size.width * 0.75,
                   ),
                   decoration: BoxDecoration(
                     color: message.isError
                         ? Colors.red.shade100
-                        : isUser 
-                            ? colorScheme.primary 
+                        : isUser
+                            ? colorScheme.primary
                             : colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(18),
                     boxShadow: [
@@ -1019,7 +1054,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ],
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -1035,8 +1071,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 style: TextStyle(
                                   color: message.isError
                                       ? Colors.red.shade900
-                                      : isUser 
-                                          ? colorScheme.onPrimary 
+                                      : isUser
+                                          ? colorScheme.onPrimary
                                           : colorScheme.onSurface,
                                   fontSize: 15,
                                   height: 1.4,
@@ -1048,53 +1084,59 @@ class _ChatScreenState extends State<ChatScreen> {
                               const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
                             ],
                           ],
                         ),
-                      
+
                       // Inline weather widget
                       if (message.hasWeatherWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 10),
+                        if (message.content.isNotEmpty)
+                          const SizedBox(height: 10),
                         InlineWeatherWidget(
                           data: message.weatherWidget!,
                           showForecast: message.showWeatherForecast,
                           isNight: message.isNight,
                         ),
                       ],
-                      
+
                       // Inline chart widget
                       if (message.hasChartWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 10),
+                        if (message.content.isNotEmpty)
+                          const SizedBox(height: 10),
                         InlineChartWidget(
                           chartData: message.chartWidget!,
                         ),
                       ],
-                      
+
                       // Inline info card widget
                       if (message.hasInfoCardWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 10),
+                        if (message.content.isNotEmpty)
+                          const SizedBox(height: 10),
                         InlineCardWidget(
                           data: message.infoCardWidget!,
                         ),
                       ],
-                      
+
                       // Inline status widget
                       if (message.hasStatusWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 10),
+                        if (message.content.isNotEmpty)
+                          const SizedBox(height: 10),
                         InlineStatusWidget(
                           data: message.statusWidget!,
                         ),
                       ],
-                      
+
                       // Generic inline widget fallback
-                      if (message.inlineWidget != null && 
+                      if (message.inlineWidget != null &&
                           !message.hasWeatherWidget &&
                           !message.hasChartWidget &&
                           !message.hasInfoCardWidget &&
                           !message.hasStatusWidget) ...[
-                        if (message.content.isNotEmpty) const SizedBox(height: 10),
+                        if (message.content.isNotEmpty)
+                          const SizedBox(height: 10),
                         _buildGenericInlineWidget(message.inlineWidget!),
                       ],
                     ],
@@ -1108,9 +1150,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     Text(
                       _formatTime(message.timestamp),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurface.withValues(alpha: 0.5),
-                        fontSize: 11,
-                      ),
+                            color: colorScheme.onSurface.withValues(alpha: 0.5),
+                            fontSize: 11,
+                          ),
                     ),
                     // Retry button for failed user messages
                     if (message.isError && isUser) ...[
@@ -1118,7 +1160,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       GestureDetector(
                         onTap: () => _retryMessage(message),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
                             color: colorScheme.errorContainer,
                             borderRadius: BorderRadius.circular(12),
@@ -1166,21 +1209,21 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-  
+
   /// Retry sending a failed message
   void _retryMessage(ChatMsg failedMessage) {
     // Remove the failed message
     setState(() {
       _messages.removeWhere((m) => m.id == failedMessage.id);
     });
-    
+
     // Put the content back in the input field
     _messageController.text = failedMessage.content;
-    
+
     // Try sending again
     _sendMessage();
   }
-  
+
   /// Build generic inline widget based on type
   Widget _buildGenericInlineWidget(InlineWidgetData inlineWidget) {
     switch (inlineWidget.type) {
@@ -1189,7 +1232,7 @@ class _ChatScreenState extends State<ChatScreen> {
         return InlineWeatherWidget(
           data: WeatherWidgetData.fromMap(inlineWidget.data),
         );
-        
+
       case InlineWidgetType.chart:
       case InlineWidgetType.data:
         // Use InlineChartData from agent_chart_tool for charts
@@ -1202,17 +1245,17 @@ class _ChatScreenState extends State<ChatScreen> {
             createdAt: DateTime.now(),
           ),
         );
-        
+
       case InlineWidgetType.card:
         return InlineCardWidget(
           data: InfoCardWidgetData.fromMap(inlineWidget.data),
         );
-        
+
       case InlineWidgetType.status:
         return InlineStatusWidget(
           data: StatusWidgetData.fromMap(inlineWidget.data),
         );
-        
+
       case InlineWidgetType.code:
         return InlineCardWidget(
           data: InfoCardWidgetData(
@@ -1221,7 +1264,7 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: '💻',
           ),
         );
-        
+
       case InlineWidgetType.link:
         return InlineCardWidget(
           data: InfoCardWidgetData(
@@ -1230,7 +1273,7 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: '🔗',
           ),
         );
-        
+
       case InlineWidgetType.image:
         return InlineCardWidget(
           data: InfoCardWidgetData(
@@ -1239,7 +1282,7 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: '🖼️',
           ),
         );
-        
+
       case InlineWidgetType.map:
         return InlineCardWidget(
           data: InfoCardWidgetData(
@@ -1248,7 +1291,7 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: '📍',
           ),
         );
-        
+
       case InlineWidgetType.action:
         return InlineCardWidget(
           data: InfoCardWidgetData.fromMap(inlineWidget.data),

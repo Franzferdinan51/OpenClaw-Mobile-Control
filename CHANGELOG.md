@@ -5,6 +5,22 @@ All notable changes to DuckBot Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.5+305] - 2026-03-11
+
+### Added
+- New merged work from the latest `DuckBot-Go-Project` update pass
+- `termux_run_command_service.dart` integration for improved Termux command flow
+- `docs/V3.0.5-PRIORITIES.md` as the current forward-looking priorities document
+
+### Changed
+- Dashboard, chat, agent monitor, control, local installer, quick actions, and Termux screens updated from the latest project workspace pass
+- Runtime/helper wiring and gateway/local metrics flow updated from the latest merged desktop project state
+- README and version surfaces aligned to v3.0.5
+
+### Validation
+- `flutter test` ✅
+- `flutter build apk --release` ✅
+
 ## [3.0.4+304] - 2026-03-11
 
 ### Added

@@ -83,6 +83,14 @@ class AndroidPackageDetector {
   static const String TERMUX_FLOAT_PACKAGE = 'com.termux.float';
   static const String TERMUX_WIDGET_PACKAGE = 'com.termux.widget';
   static const String TERMUX_BOOT_PACKAGE = 'com.termux.boot';
+  static const String TERMUX_FDROID_URL =
+      'https://f-droid.org/packages/com.termux/';
+  static const String TERMUX_API_FDROID_URL =
+      'https://f-droid.org/packages/com.termux.api/';
+  static const String TERMUX_GITHUB_RELEASES_URL =
+      'https://github.com/termux/termux-app/releases';
+  static const String TERMUX_API_GITHUB_RELEASES_URL =
+      'https://github.com/termux/termux-api/releases';
 
   /// Check if a package is installed using pm command
   static Future<PackageDetectionResult> checkPackage(String packageName) async {
@@ -274,7 +282,7 @@ class TermuxPrerequisiteChecker {
           : 'Termux not installed',
       actionRequired: termuxResult.isInstalled
           ? null
-          : 'Install Termux from F-Droid (https://f-droid.org/packages/com.termux/)',
+          : 'Install Termux from F-Droid or GitHub Releases, not Google Play',
       severity: PrerequisiteSeverity.required,
     ));
 
@@ -288,11 +296,11 @@ class TermuxPrerequisiteChecker {
           : 'Termux:API not installed',
       actionRequired: termuxApiResult.isInstalled
           ? null
-          : 'Install Termux:API for enhanced functionality (optional)',
+          : 'Install the Termux:API app from the same source as Termux',
       severity: PrerequisiteSeverity.recommended,
     ));
 
-    // 4. Check storage permission (if Termux is installed)
+    // 4. Check storage permission (recommended for shared file access)
     if (termuxResult.isInstalled) {
       final storageGranted = await _checkStoragePermission();
       checks.add(PrerequisiteCheck(
@@ -301,12 +309,12 @@ class TermuxPrerequisiteChecker {
         message: storageGranted ? 'Storage permission granted' : 'Storage permission not granted',
         actionRequired: storageGranted
             ? null
-            : 'Run "termux-setup-storage" in Termux to grant storage access',
-        severity: PrerequisiteSeverity.required,
+            : 'Run "termux-setup-storage" in Termux if you want shared storage access',
+        severity: PrerequisiteSeverity.recommended,
       ));
     }
 
-    // 5. Check Node.js availability
+    // 5. Check Node.js availability (recommended, installer can add it)
     final nodeCheck = await _checkNodeJs();
     checks.add(nodeCheck);
 
@@ -361,16 +369,16 @@ class TermuxPrerequisiteChecker {
         name: 'Node.js',
         isSatisfied: false,
         message: 'Node.js not found',
-        actionRequired: 'Install Node.js via "pkg install nodejs" in Termux',
-        severity: PrerequisiteSeverity.required,
+        actionRequired: 'Install Node.js in Termux with "pkg install nodejs"',
+        severity: PrerequisiteSeverity.recommended,
       );
     } catch (e) {
       return PrerequisiteCheck(
         name: 'Node.js',
         isSatisfied: false,
         message: 'Could not check Node.js: $e',
-        actionRequired: 'Ensure Termux is properly configured',
-        severity: PrerequisiteSeverity.required,
+        actionRequired: 'Open Termux once, then install Node.js with "pkg install nodejs"',
+        severity: PrerequisiteSeverity.recommended,
       );
     }
   }

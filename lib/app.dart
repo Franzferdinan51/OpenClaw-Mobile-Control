@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/gateway_service.dart';
 import '../services/discovery_service.dart';
@@ -6,12 +7,14 @@ import '../services/app_settings_service.dart';
 import '../services/connection_monitor_service.dart';
 import '../services/theme_service.dart';
 import '../dialogs/connection_success_dialog.dart';
+import '../widgets/connection_status_card.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/quick_actions_screen.dart';
 import 'screens/control_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/settings_advanced_screen.dart';
 import 'screens/browser_control_screen.dart';
 import 'screens/workflows_screen.dart';
 import 'screens/scheduled_tasks_screen.dart';
@@ -32,7 +35,7 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
   bool _autoConnectFailed = false;
   bool _isFirstLaunch = false;
   String? _initialError;
-  
+
   // Global navigator key for route handling
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
@@ -48,11 +51,12 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     });
 
     final prefs = await SharedPreferences.getInstance();
-    
+
     // Check if first launch
     _isFirstLaunch = prefs.getBool('has_completed_setup') ?? true;
-    final hasShownSuccessDialog = prefs.getBool('has_shown_connection_success') ?? false;
-    
+    final hasShownSuccessDialog =
+        prefs.getBool('has_shown_connection_success') ?? false;
+
     String? gatewayUrl = prefs.getString('gateway_url');
     String? token = prefs.getString('gateway_token');
     String? gatewayName = prefs.getString('gateway_name');
@@ -69,16 +73,16 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
           _gatewayService!,
           gatewayName: gatewayName,
         );
-        
+
         setState(() {
           _isLoading = false;
           _isFirstLaunch = false;
         });
-        
+
         // Show success dialog on first connection (but not on app restart)
         if (!hasShownSuccessDialog && mounted) {
           await prefs.setBool('has_shown_connection_success', true);
-          
+
           // Show success dialog
           final status = await _gatewayService!.getStatus();
           if (status != null && mounted) {
@@ -157,7 +161,8 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
 
   Future<void> _loadGatewayService() async {
     final prefs = await SharedPreferences.getInstance();
-    final gatewayUrl = prefs.getString('gateway_url') ?? 'http://localhost:18789';
+    final gatewayUrl =
+        prefs.getString('gateway_url') ?? 'http://localhost:18789';
     final token = prefs.getString('gateway_token');
 
     setState(() {
@@ -225,10 +230,11 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
       },
     );
   }
-  
+
   /// Get initial tab from route parameters
   int? _getInitialTab(BuildContext context) {
-    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
     if (args != null && args.containsKey('tab')) {
       final tab = args['tab'] as String;
       switch (tab) {
@@ -376,20 +382,23 @@ class _GuidedSetupScreen extends StatelessWidget {
               Text(
                 'Let\'s Get You Connected!',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
               Text(
                 error ?? 'Choose how you want to use OpenClaw Mobile:',
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                ),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withOpacity(0.7),
+                    ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 40),
-              
+
               // Option 1: Install Locally
               Card(
                 elevation: 4,
@@ -421,16 +430,25 @@ class _GuidedSetupScreen extends StatelessWidget {
                                 children: [
                                   Text(
                                     'Install on This Phone',
-                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
                                     'Install OpenClaw locally via Termux',
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.7),
+                                        ),
                                   ),
                                 ],
                               ),
@@ -453,9 +471,12 @@ class _GuidedSetupScreen extends StatelessWidget {
                             children: [
                               Text(
                                 '✨ Best for:',
-                                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
                               ),
                               const SizedBox(height: 4),
                               Text(
@@ -471,7 +492,7 @@ class _GuidedSetupScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // Option 2: Connect to Remote
               Card(
                 elevation: 4,
@@ -503,16 +524,25 @@ class _GuidedSetupScreen extends StatelessWidget {
                                 children: [
                                   Text(
                                     'Connect to Remote Gateway',
-                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
                                     'Connect to OpenClaw on another device',
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withOpacity(0.7),
+                                        ),
                                   ),
                                 ],
                               ),
@@ -535,9 +565,12 @@ class _GuidedSetupScreen extends StatelessWidget {
                             children: [
                               Text(
                                 '✨ Best for:',
-                                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
                               ),
                               const SizedBox(height: 4),
                               Text(
@@ -601,7 +634,8 @@ class _GuidedSetupScreen extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline, color: Colors.amber, size: 20),
+                    const Icon(Icons.info_outline,
+                        color: Colors.amber, size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -753,7 +787,8 @@ class _GuidedSetupScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildConnectionOption(String title, String description, IconData icon, VoidCallback onTap) {
+  Widget _buildConnectionOption(
+      String title, String description, IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -819,6 +854,19 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant MainNavigationScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final gatewayChanged =
+        oldWidget.gatewayService?.baseUrl != widget.gatewayService?.baseUrl ||
+            oldWidget.gatewayService?.token != widget.gatewayService?.token;
+
+    if (gatewayChanged) {
+      _gatewayService = widget.gatewayService;
+    }
+  }
+
+  @override
   void dispose() {
     _appSettings.removeListener(_onSettingsChanged);
     super.dispose();
@@ -829,12 +877,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     setState(() {});
   }
 
-  void _updateGatewayService(GatewayService service) {
-    setState(() {
-      _gatewayService = service;
-    });
-  }
-
   void _onModeChanged() {
     // Force rebuild of navigation
     setState(() {
@@ -842,11 +884,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     });
   }
 
+  void _openTab(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     // Build navigation based on current mode
     final destinations = _buildNavDestinations();
-    
+
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
@@ -866,7 +914,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   List<NavigationDestination> _buildNavDestinations() {
     final mode = _appSettings.currentMode;
-    
+
     // All modes have these core tabs
     final destinations = <NavigationDestination>[
       const NavigationDestination(
@@ -880,14 +928,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         label: 'Chat',
       ),
     ];
-    
+
     // Add Actions tab (different for each mode)
     destinations.add(NavigationDestination(
       icon: Icon(Icons.bolt_outlined, color: _getModeColor(mode)),
       selectedIcon: Icon(Icons.bolt, color: _getModeColor(mode)),
       label: 'Actions',
     ));
-    
+
     // Power User and Developer get Tools tab
     if (mode == AppMode.powerUser || mode == AppMode.developer) {
       destinations.add(NavigationDestination(
@@ -896,7 +944,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         label: 'Tools',
       ));
     }
-    
+
     // Developer gets Dev tab
     if (mode == AppMode.developer) {
       destinations.add(NavigationDestination(
@@ -905,52 +953,57 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         label: 'Dev',
       ));
     }
-    
+
     // All modes have Settings
     destinations.add(const NavigationDestination(
       icon: Icon(Icons.settings_outlined),
       selectedIcon: Icon(Icons.settings),
       label: 'Settings',
     ));
-    
+
     return destinations;
   }
 
   List<Widget> _buildScreens() {
     final mode = _appSettings.currentMode;
-    
+
     final screens = <Widget>[
       // Tab 0: Home (Dashboard)
-      DashboardScreen(gatewayService: _gatewayService),
+      DashboardScreen(
+        gatewayService: _gatewayService,
+        onGatewayChanged: widget.onGatewayChanged,
+        onOpenChat: () => _openTab(1),
+      ),
       // Tab 1: Chat
       ChatScreen(gatewayService: _gatewayService),
     ];
-    
+
     // Tab 2: Actions
     screens.add(_ActionsHubScreen(
       mode: mode,
       showAdvanced: mode != AppMode.basic,
       gatewayService: _gatewayService,
+      onOpenChat: () => _openTab(1),
     ));
-    
+
     // Tab 3: Tools (Power User and Developer only)
     if (mode == AppMode.powerUser || mode == AppMode.developer) {
       screens.add(_ToolsHubScreen(
         showDeveloperTools: mode == AppMode.developer,
       ));
     }
-    
+
     // Tab 4: Dev Tools (Developer only)
     if (mode == AppMode.developer) {
-      screens.add(const _DevToolsScreen());
+      screens.add(_DevToolsScreen(gatewayService: _gatewayService));
     }
-    
+
     // Settings tab (last)
     screens.add(SettingsScreen(
       onGatewayChanged: widget.onGatewayChanged,
       onModeChanged: _onModeChanged,
     ));
-    
+
     return screens;
   }
 
@@ -965,23 +1018,27 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 }
+
 // Hub screen combining Quick Actions and Control
 class _ActionsHubScreen extends StatefulWidget {
   final AppMode mode;
   final bool showAdvanced;
   final GatewayService? gatewayService;
+  final VoidCallback? onOpenChat;
 
   const _ActionsHubScreen({
     this.mode = AppMode.basic,
     this.showAdvanced = false,
     this.gatewayService,
+    this.onOpenChat,
   });
 
   @override
   State<_ActionsHubScreen> createState() => _ActionsHubScreenState();
 }
 
-class _ActionsHubScreenState extends State<_ActionsHubScreen> with SingleTickerProviderStateMixin {
+class _ActionsHubScreenState extends State<_ActionsHubScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -1038,8 +1095,14 @@ class _ActionsHubScreenState extends State<_ActionsHubScreen> with SingleTickerP
       body: TabBarView(
         controller: _tabController,
         children: [
-          QuickActionsScreen(showAdvanced: widget.showAdvanced, gatewayService: widget.gatewayService),
-          ControlScreen(showAdvanced: widget.showAdvanced),
+          QuickActionsScreen(
+              showAdvanced: widget.showAdvanced,
+              gatewayService: widget.gatewayService,
+              onOpenChat: widget.onOpenChat),
+          ControlScreen(
+            showAdvanced: widget.showAdvanced,
+            gatewayService: widget.gatewayService,
+          ),
         ],
       ),
     );
@@ -1069,7 +1132,8 @@ class _ToolsHubScreen extends StatefulWidget {
   State<_ToolsHubScreen> createState() => _ToolsHubScreenState();
 }
 
-class _ToolsHubScreenState extends State<_ToolsHubScreen> with SingleTickerProviderStateMixin {
+class _ToolsHubScreenState extends State<_ToolsHubScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -1139,7 +1203,9 @@ class _ToolsHubScreenState extends State<_ToolsHubScreen> with SingleTickerProvi
 
 // Developer Tools screen (Developer mode only)
 class _DevToolsScreen extends StatelessWidget {
-  const _DevToolsScreen();
+  final GatewayService? gatewayService;
+
+  const _DevToolsScreen({this.gatewayService});
 
   @override
   Widget build(BuildContext context) {
@@ -1177,10 +1243,11 @@ class _DevToolsScreen extends StatelessWidget {
               subtitle: const Text('Test API endpoints directly'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('API Explorer coming soon!'),
-                    backgroundColor: Colors.purple,
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => _ApiExplorerScreen(
+                      gatewayService: gatewayService,
+                    ),
                   ),
                 );
               },
@@ -1194,11 +1261,8 @@ class _DevToolsScreen extends StatelessWidget {
               subtitle: const Text('View debug logs and errors'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Debug Console coming soon!'),
-                    backgroundColor: Colors.red,
-                  ),
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (context) => const LogsScreen()),
                 );
               },
             ),
@@ -1211,11 +1275,8 @@ class _DevToolsScreen extends StatelessWidget {
               subtitle: const Text('View raw gateway logs'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Raw Logs coming soon!'),
-                    backgroundColor: Colors.orange,
-                  ),
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (context) => const LogsScreen()),
                 );
               },
             ),
@@ -1228,10 +1289,9 @@ class _DevToolsScreen extends StatelessWidget {
               subtitle: const Text('Edit raw configuration'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Advanced Config coming soon!'),
-                    backgroundColor: Colors.blue,
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const AdvancedSettingsScreen(),
                   ),
                 );
               },
@@ -1245,15 +1305,224 @@ class _DevToolsScreen extends StatelessWidget {
               subtitle: const Text('Monitor network requests'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Network Inspector coming soon!'),
-                    backgroundColor: Colors.green,
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => _NetworkInspectorScreen(
+                      gatewayService: gatewayService,
+                    ),
                   ),
                 );
               },
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApiExplorerScreen extends StatelessWidget {
+  final GatewayService? gatewayService;
+
+  const _ApiExplorerScreen({this.gatewayService});
+
+  @override
+  Widget build(BuildContext context) {
+    final baseUrl = gatewayService?.baseUrl ??
+        connectionMonitor.state.gatewayUrl ??
+        'http://localhost:18789';
+
+    final endpoints = <Map<String, String>>[
+      {
+        'label': 'Health Check',
+        'method': 'GET',
+        'path': '$baseUrl/health',
+        'curl': 'curl $baseUrl/health',
+      },
+      {
+        'label': 'Gateway Status',
+        'method': 'GET',
+        'path': '$baseUrl/api/gateway',
+        'curl': 'curl $baseUrl/api/gateway',
+      },
+      {
+        'label': 'Gateway Logs',
+        'method': 'GET',
+        'path': '$baseUrl/api/logs?limit=100',
+        'curl': 'curl "$baseUrl/api/logs?limit=100"',
+      },
+      {
+        'label': 'Agent Action',
+        'method': 'POST',
+        'path': '$baseUrl/api/gateway/action',
+        'curl':
+            'curl -X POST $baseUrl/api/gateway/action -H "Content-Type: application/json" -d \'{"action":"history","sessionKey":"main","limit":20}\'',
+      },
+    ];
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('API Explorer')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('Current Gateway'),
+              subtitle: SelectableText(baseUrl),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...endpoints.map((endpoint) {
+            final curl = endpoint['curl']!;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: endpoint['method'] == 'POST'
+                                  ? Colors.orange.withOpacity(0.15)
+                                  : Colors.green.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              endpoint['method']!,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: endpoint['method'] == 'POST'
+                                    ? Colors.orange[800]
+                                    : Colors.green[800],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              endpoint['label']!,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      SelectableText(
+                        endpoint['path']!,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await Clipboard.setData(ClipboardData(text: curl));
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('cURL command copied'),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.copy),
+                        label: const Text('Copy cURL'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkInspectorScreen extends StatelessWidget {
+  final GatewayService? gatewayService;
+
+  const _NetworkInspectorScreen({this.gatewayService});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: connectionMonitor,
+      builder: (context, _) {
+        final state = connectionMonitor.state;
+        final gatewayUrl = gatewayService?.baseUrl ??
+            state.gatewayUrl ??
+            'No gateway configured';
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('Network Inspector')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              ConnectionStatusCard(
+                onRetry: () => connectionMonitor.reconnect(),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Raw Connection State',
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildInspectorRow('Gateway URL', gatewayUrl),
+                      _buildInspectorRow('Status', state.statusText),
+                      _buildInspectorRow('Latency', '${state.latencyMs}ms'),
+                      _buildInspectorRow(
+                        'Last Ping',
+                        state.lastPing?.toIso8601String() ?? 'Never',
+                      ),
+                      _buildInspectorRow(
+                        'Error',
+                        state.errorMessage?.isNotEmpty == true
+                            ? state.errorMessage!
+                            : 'None',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInspectorRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(child: SelectableText(value)),
         ],
       ),
     );

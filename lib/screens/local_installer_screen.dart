@@ -1,17 +1,19 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/nodejs_installer_service.dart';
 import '../services/gateway_service.dart';
 import '../services/termux_service.dart';
+import '../services/termux_run_command_service.dart';
 import '../utils/android_package_detector.dart';
 import 'connect_gateway_screen.dart';
 
 /// Local OpenClaw Installer Screen
-/// 
-/// Guides users through installing OpenClaw locally on their Android device
-/// using Termux or a bundled Node.js runtime. No root required.
-/// 
+///
+/// Guides users through installing OpenClaw locally on Android using
+/// the official Termux app and Termux:API app. No root required.
+///
 /// Features:
 /// - Comprehensive prerequisite checking
 /// - Clear status messages for what's installed/missing
@@ -28,28 +30,30 @@ class LocalInstallerScreen extends StatefulWidget {
 
 class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     with TickerProviderStateMixin {
-  final NodejsInstallerService _installerService = NodejsInstallerService();
   final TermuxService _termuxService = TermuxService();
-  
+  final TermuxRunCommandService _termuxBridge = TermuxRunCommandService();
+
   // Installation state
   InstallationState _state = InstallationState.idle;
   InstallationStep _currentStep = InstallationStep.checkingPrerequisites;
   double _progress = 0.0;
   String _statusMessage = 'Checking prerequisites...';
   String? _errorMessage;
-  List<InstallLogEntry> _logs = [];
-  
+  final List<InstallLogEntry> _logs = [];
+  bool _setupSentToTermux = false;
+  bool _hasRunCommandPermission = false;
+
   // Prerequisite check results
   TermuxReadinessSummary? _readinessSummary;
   bool _isCheckingReadiness = false;
   bool _hasShownReadiness = false;
-  
+
   // Controllers
   final ScrollController _logsScrollController = ScrollController();
   late AnimationController _pulseController;
-  
+
   // Gateway info after installation
-  String? _gatewayUrl;
+  final String _gatewayUrl = 'http://127.0.0.1:18789';
   bool _gatewayRunning = false;
 
   @override
@@ -59,8 +63,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    
-    _setupListeners();
+
     _checkReadiness();
   }
 
@@ -72,20 +75,29 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     try {
       // Initialize Termux service for detection
       await _termuxService.initialize();
-      
+      _hasRunCommandPermission = await _termuxBridge.hasRunCommandPermission();
+
       // Get readiness summary
-      _readinessSummary = await _installerService.getReadinessSummary();
-      
+      _readinessSummary = await TermuxPrerequisiteChecker.getReadinessSummary();
+
       // Log results
-      _log('info', 'Readiness check complete: ${_readinessSummary!.readinessText}');
-      _log('info', 'Passed ${_readinessSummary!.passedChecks}/${_readinessSummary!.totalChecks} checks');
-      
+      _log('info',
+          'Readiness check complete: ${_readinessSummary!.readinessText}');
+      _log('info',
+          'Passed ${_readinessSummary!.passedChecks}/${_readinessSummary!.totalChecks} checks');
+      _log(
+        _hasRunCommandPermission ? 'info' : 'error',
+        _hasRunCommandPermission
+            ? 'RUN_COMMAND permission granted'
+            : 'RUN_COMMAND permission missing - grant it in app settings',
+      );
+
       if (_readinessSummary!.blockingIssues.isNotEmpty) {
         for (final issue in _readinessSummary!.blockingIssues) {
           _log('error', 'BLOCKING: ${issue.name} - ${issue.actionRequired}');
         }
       }
-      
+
       if (_readinessSummary!.recommendations.isNotEmpty) {
         for (final rec in _readinessSummary!.recommendations) {
           _log('info', 'RECOMMENDED: ${rec.name} - ${rec.actionRequired}');
@@ -99,43 +111,6 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       _isCheckingReadiness = false;
       _hasShownReadiness = true;
     });
-  }
-
-  void _setupListeners() {
-    _installerService.onProgress = (step, progress, message) {
-      if (mounted) {
-        setState(() {
-          _currentStep = step;
-          _progress = progress;
-          _statusMessage = message;
-        });
-      }
-    };
-
-    _installerService.onLog = (level, message, [details]) {
-      if (mounted) {
-        setState(() {
-          _logs.add(InstallLogEntry(
-            timestamp: DateTime.now(),
-            level: level,
-            message: message,
-            details: details,
-          ));
-        });
-        _scrollToBottom();
-      }
-    };
-
-    _installerService.onStateChange = (state) {
-      if (mounted) {
-        setState(() {
-          _state = state;
-          if (state == InstallationState.error) {
-            _errorMessage = _installerService.lastError;
-          }
-        });
-      }
-    };
   }
 
   void _scrollToBottom() {
@@ -177,73 +152,136 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       return;
     }
 
+    if (!_hasRunCommandPermission) {
+      _showRunCommandPermissionDialog();
+      return;
+    }
+
     setState(() {
-      _state = InstallationState.installingNodejs;
+      _state = InstallationState.installingOpenClaw;
+      _currentStep = InstallationStep.installingOpenClaw;
+      _progress = 0.2;
+      _statusMessage = 'Sending no-root setup to Termux...';
       _errorMessage = null;
-      _logs.clear();
     });
 
-    final success = await _installerService.installOpenClaw();
+    _log('info', 'Sending no-root install command to Termux');
+    _log('info', 'Command sequence:');
+    _log('info', _termuxBridge.noRootInstallScript.trim());
 
-    if (success && mounted) {
-      setState(() {
-        _gatewayUrl = 'http://127.0.0.1:18789';
-        _gatewayRunning = true;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✅ OpenClaw installed successfully!'),
-          backgroundColor: Colors.green,
-        ),
+    try {
+      final success = await _termuxBridge.runCommand(
+        script: _termuxBridge.noRootInstallScript,
+        label: 'DuckBot No-Root Setup',
+        description:
+            'Install Node.js, termux-api package, storage access, and OpenClaw',
+        background: false,
       );
+
+      if (!mounted) return;
+
+      if (success) {
+        setState(() {
+          _setupSentToTermux = true;
+          _state = InstallationState.idle;
+          _progress = 1.0;
+          _statusMessage =
+              'Setup sent to Termux. Finish there, then return and test connection.';
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Setup sent to Termux. Complete it there and return here.'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      } else {
+        setState(() {
+          _state = InstallationState.error;
+          _errorMessage = 'Termux did not accept the setup command.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _state = InstallationState.error;
+        _errorMessage = 'Failed to send setup to Termux: $e';
+      });
     }
   }
 
   Future<void> _startGateway() async {
     setState(() {
       _state = InstallationState.startingGateway;
+      _currentStep = InstallationStep.startingGateway;
+      _progress = 0.3;
+      _statusMessage = 'Sending gateway start command to Termux...';
     });
 
-    final success = await _installerService.startGateway();
+    try {
+      final success = await _termuxBridge.runCommand(
+        script: _termuxBridge.startGatewayScript,
+        label: 'Start OpenClaw Gateway',
+        description: 'Start the local OpenClaw gateway on port 18789',
+        background: false,
+      );
 
-    if (mounted) {
+      if (!mounted) return;
+
       setState(() {
-        _gatewayRunning = success;
-        _state = success ? InstallationState.completed : InstallationState.error;
-        if (!success) {
-          _errorMessage = 'Failed to start gateway. Check logs for details.';
-        }
+        _gatewayRunning = false;
+        _setupSentToTermux = success || _setupSentToTermux;
+        _state =
+            success ? InstallationState.completed : InstallationState.error;
+        _progress = success ? 1.0 : 0.0;
+        _statusMessage = success
+            ? 'Gateway start sent to Termux. Verify reachability after it starts.'
+            : 'Gateway start failed.';
+        _errorMessage =
+            success ? null : 'Failed to send gateway start to Termux.';
       });
 
       if (success) {
+        _log('info', 'Gateway start command sent to Termux');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('🚀 Gateway started successfully!'),
+            content: Text('Gateway start sent to Termux'),
             backgroundColor: Colors.green,
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _state = InstallationState.error;
+        _errorMessage = 'Failed to send gateway command: $e';
+      });
     }
   }
 
   Future<void> _testConnection() async {
-    if (_gatewayUrl == null) return;
-
     setState(() {
       _statusMessage = 'Testing connection...';
     });
 
-    final gatewayService = GatewayService(baseUrl: _gatewayUrl!);
+    final gatewayService = GatewayService(baseUrl: _gatewayUrl);
     final result = await gatewayService.checkConnection();
 
     if (mounted) {
       final success = result['success'] == true;
+      setState(() {
+        _gatewayRunning = success;
+        _state = success ? InstallationState.completed : _state;
+        _statusMessage = success
+            ? 'Gateway is reachable at $_gatewayUrl'
+            : 'Gateway is not reachable yet';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(success 
-            ? '✅ Connection successful!' 
-            : '❌ Connection failed: ${result['error']}'),
+          content: Text(success
+              ? '✅ Connection successful!'
+              : '❌ Connection failed: ${result['error']}'),
           backgroundColor: success ? Colors.green : Colors.red,
         ),
       );
@@ -261,9 +299,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
         buffer.writeln('  → ${log.details}');
       }
     }
-    
+
     await Clipboard.setData(ClipboardData(text: buffer.toString()));
-    
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -272,6 +310,88 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
         ),
       );
     }
+  }
+
+  Future<void> _copyNoRootSetupCommands() async {
+    await Clipboard.setData(
+      ClipboardData(text: _termuxBridge.noRootInstallScript.trim()),
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('No-root setup commands copied'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _copyGatewayStartCommand() async {
+    await Clipboard.setData(
+      ClipboardData(text: _termuxBridge.startGatewayScript),
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Gateway start command copied'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _launchExternalUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open $url')),
+      );
+    }
+  }
+
+  Future<void> _openAppSettings({String? packageName}) async {
+    await _termuxBridge.openAppSettings(packageName: packageName);
+  }
+
+  Future<void> _launchTermuxApp() async {
+    final launched = await _termuxBridge.launchTermux();
+    if (!mounted) return;
+
+    if (!launched) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Termux app is not installed'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showRunCommandPermissionDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Grant Termux Command Permission'),
+        content: const Text(
+          'This app needs the official Termux RUN_COMMAND permission to send no-root setup commands. '
+          'Open this app’s Android settings, allow the additional Termux permission, then retry.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _openAppSettings();
+            },
+            child: const Text('Open App Settings'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showTroubleshooting() {
@@ -296,7 +416,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   'Make sure you have enough storage space (~500MB)',
                   'Check your internet connection',
                   'Try restarting the app and trying again',
-                  'If using Termux, ensure it\'s from F-Droid, not Play Store',
+                  'Use the official Termux app from F-Droid or GitHub Releases, not Google Play',
+                  'Install the Termux:API app from the same source as Termux',
+                  'Grant this app the Termux RUN_COMMAND permission in Android settings',
                 ],
               ),
               const SizedBox(height: 16),
@@ -323,12 +445,14 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               _buildTroubleshootingSection(
                 'Manual Installation (Fallback)',
                 [
-                  'If automatic install fails, you can manually install:',
-                  '1. Install Termux from F-Droid',
-                  '2. Run: pkg update && pkg install -y nodejs',
-                  '3. Run: npm install -g openclaw',
-                  '4. Run: openclaw onboarding (select Loopback)',
-                  '5. Run: openclaw gateway start',
+                  'If in-app launch fails, use the official no-root flow manually:',
+                  '1. Install Termux and Termux:API from the same source (F-Droid or GitHub Releases)',
+                  '2. Open Termux once',
+                  '3. Run: pkg update -y && pkg upgrade -y',
+                  '4. Run: pkg install -y nodejs termux-api',
+                  '5. Run: termux-setup-storage',
+                  '6. Run: npm install -g openclaw --unsafe-perm',
+                  '7. Run: openclaw gateway start --port 18789',
                 ],
               ),
             ],
@@ -354,15 +478,16 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
         ),
         const SizedBox(height: 8),
         ...items.map((item) => Padding(
-          padding: const EdgeInsets.only(left: 16, bottom: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('• ', style: TextStyle(fontSize: 14)),
-              Expanded(child: Text(item, style: const TextStyle(fontSize: 13))),
-            ],
-          ),
-        )),
+              padding: const EdgeInsets.only(left: 16, bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('• ', style: TextStyle(fontSize: 14)),
+                  Expanded(
+                      child: Text(item, style: const TextStyle(fontSize: 13))),
+                ],
+              ),
+            )),
       ],
     );
   }
@@ -371,7 +496,6 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   void dispose() {
     _pulseController.dispose();
     _logsScrollController.dispose();
-    _installerService.dispose();
     super.dispose();
   }
 
@@ -415,53 +539,56 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   // Header card
                   _buildHeaderCard(colorScheme),
                   const SizedBox(height: 24),
-                  
+
                   // Prerequisites check (shown before installation)
-                  if (_hasShownReadiness && _readinessSummary != null && 
+                  if (_hasShownReadiness &&
+                      _readinessSummary != null &&
                       _state == InstallationState.idle)
                     _buildReadinessCard(colorScheme),
-                  
-                  if (_hasShownReadiness && _readinessSummary != null && 
+
+                  if (_hasShownReadiness &&
+                      _readinessSummary != null &&
                       _state == InstallationState.idle)
                     const SizedBox(height: 24),
-                  
+
                   // Progress indicator
-                  if (_state != InstallationState.idle && 
+                  if (_state != InstallationState.idle &&
                       _state != InstallationState.completed)
                     _buildProgressCard(colorScheme),
-                  
-                  if (_state != InstallationState.idle && 
+
+                  if (_state != InstallationState.idle &&
                       _state != InstallationState.completed)
                     const SizedBox(height: 24),
-                  
+
                   // Error card
-                  if (_errorMessage != null)
-                    _buildErrorCard(colorScheme),
-                  
-                  if (_errorMessage != null)
-                    const SizedBox(height: 24),
-                  
+                  if (_errorMessage != null) _buildErrorCard(colorScheme),
+
+                  if (_errorMessage != null) const SizedBox(height: 24),
+
                   // Success card
-                  if (_state == InstallationState.completed || _gatewayRunning)
+                  if (_setupSentToTermux ||
+                      _state == InstallationState.completed ||
+                      _gatewayRunning)
                     _buildSuccessCard(colorScheme),
-                  
-                  if (_state == InstallationState.completed || _gatewayRunning)
+
+                  if (_setupSentToTermux ||
+                      _state == InstallationState.completed ||
+                      _gatewayRunning)
                     const SizedBox(height: 24),
-                  
+
                   // Action buttons
                   _buildActionButtons(colorScheme),
                   const SizedBox(height: 24),
-                  
+
                   // Requirements info
                   _buildRequirementsCard(colorScheme),
                 ],
               ),
             ),
           ),
-          
+
           // Logs panel (collapsible)
-          if (_logs.isNotEmpty)
-            _buildLogsPanel(colorScheme),
+          if (_logs.isNotEmpty) _buildLogsPanel(colorScheme),
         ],
       ),
     );
@@ -485,7 +612,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        colorScheme.primary.withOpacity(0.3 + (_pulseController.value * 0.3)),
+                        colorScheme.primary
+                            .withOpacity(0.3 + (_pulseController.value * 0.3)),
                         colorScheme.primary.withOpacity(0.1),
                       ],
                     ),
@@ -502,17 +630,17 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             Text(
               'Install OpenClaw Locally',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Run OpenClaw AI Gateway directly on your Android device. '
-              'No root access required!',
+              'Use the official Termux app and Termux:API app to run OpenClaw '
+              'directly on Android with no root access.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
+                    color: colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
@@ -538,8 +666,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                 'Verifying Termux, Node.js, and system requirements',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+                      color: colorScheme.onSurfaceVariant,
+                    ),
               ),
             ],
           ),
@@ -582,8 +710,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                       Text(
                         'Installation Readiness',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                              fontWeight: FontWeight.bold,
+                            ),
                       ),
                       Text(
                         summary.readinessText,
@@ -597,9 +725,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                 ),
               ],
             ),
-            
+
             const Divider(height: 24),
-            
+
             // Progress
             LinearProgressIndicator(
               value: summary.passedChecks / summary.totalChecks,
@@ -613,69 +741,120 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               '${summary.passedChecks}/${summary.totalChecks} checks passed',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            
+
             const SizedBox(height: 16),
-            
+
             // Blocking issues
             if (blockingCount > 0) ...[
               Text(
                 '⚠️ Blocking Issues ($blockingCount)',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: Colors.red,
-                  fontWeight: FontWeight.bold,
-                ),
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               ...summary.blockingIssues.map((issue) => _buildPrerequisiteItem(
-                issue.name,
-                issue.message ?? 'Not satisfied',
-                issue.actionRequired,
-                false,
-              )),
+                    issue.name,
+                    issue.message ?? 'Not satisfied',
+                    issue.actionRequired,
+                    false,
+                  )),
               const SizedBox(height: 16),
             ],
-            
+
             // Recommendations
             if (recommendedCount > 0) ...[
               Text(
                 '💡 Recommendations ($recommendedCount)',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: Colors.orange,
-                  fontWeight: FontWeight.bold,
-                ),
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
               ...summary.recommendations.map((issue) => _buildPrerequisiteItem(
-                issue.name,
-                issue.message ?? 'Not satisfied',
-                issue.actionRequired,
-                true,
-              )),
+                    issue.name,
+                    issue.message ?? 'Not satisfied',
+                    issue.actionRequired,
+                    true,
+                  )),
               const SizedBox(height: 16),
             ],
-            
+
             // Termux info
             if (_termuxService.isInitialized) ...[
               const Divider(height: 24),
               Text(
                 'Detected Environment',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
               const SizedBox(height: 8),
-              _buildInfoRow('Termux', 
-                _termuxService.isTermuxAvailable 
-                  ? '✅ ${_termuxService.termuxVersion ?? "Installed"}'
-                  : '❌ Not installed'),
-              _buildInfoRow('Termux:API',
-                _termuxService.isTermuxApiAvailable
-                  ? '✅ ${_termuxService.termuxApiDetectionResult?.versionName ?? "Installed"}'
-                  : 'ℹ️ Not installed (optional)'),
-              _buildInfoRow('proot-distro',
-                _termuxService.isProotAvailable ? '✅ Available' : '❌ Not available'),
-              _buildInfoRow('Ubuntu',
-                _termuxService.isUbuntuInstalled ? '✅ Installed' : 'ℹ️ Not installed'),
+              _buildInfoRow(
+                  'Termux',
+                  _termuxService.isTermuxAvailable
+                      ? '✅ ${_termuxService.termuxVersion ?? "Installed"}'
+                      : '❌ Not installed'),
+              _buildInfoRow(
+                  'Termux:API',
+                  _termuxService.isTermuxApiAvailable
+                      ? '✅ ${_termuxService.termuxApiDetectionResult?.versionName ?? "Installed"}'
+                      : 'ℹ️ Missing app'),
+              _buildInfoRow(
+                  'RUN_COMMAND Permission',
+                  _hasRunCommandPermission
+                      ? '✅ Granted'
+                      : '❌ Grant in app settings'),
+              _buildInfoRow('Install Mode', 'Official Termux no-root'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _launchExternalUrl(
+                      TermuxRunCommandService.termuxAppFdroidUrl,
+                    ),
+                    icon: const Icon(Icons.download),
+                    label: const Text('Termux F-Droid'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _launchExternalUrl(
+                      TermuxRunCommandService.termuxAppGithubUrl,
+                    ),
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('Termux Releases'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _launchExternalUrl(
+                      TermuxRunCommandService.termuxApiFdroidUrl,
+                    ),
+                    icon: const Icon(Icons.extension),
+                    label: const Text('Termux:API F-Droid'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _launchExternalUrl(
+                      TermuxRunCommandService.termuxApiGithubUrl,
+                    ),
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('Termux:API Releases'),
+                  ),
+                  if (!_hasRunCommandPermission)
+                    OutlinedButton.icon(
+                      onPressed: () => _openAppSettings(),
+                      icon: const Icon(Icons.settings),
+                      label: const Text('Grant Permission'),
+                    )
+                  else if (_termuxService.isTermuxAvailable)
+                    OutlinedButton.icon(
+                      onPressed: _launchTermuxApp,
+                      icon: const Icon(Icons.terminal),
+                      label: const Text('Open Termux'),
+                    ),
+                ],
+              ),
             ],
           ],
         ),
@@ -683,17 +862,20 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     );
   }
 
-  Widget _buildPrerequisiteItem(String name, String status, String? action, bool isRecommended) {
+  Widget _buildPrerequisiteItem(
+      String name, String status, String? action, bool isRecommended) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isRecommended 
-          ? Colors.orange.withOpacity(0.1)
-          : Colors.red.withOpacity(0.1),
+        color: isRecommended
+            ? Colors.orange.withOpacity(0.1)
+            : Colors.red.withOpacity(0.1),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isRecommended ? Colors.orange.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+          color: isRecommended
+              ? Colors.orange.withOpacity(0.3)
+              : Colors.red.withOpacity(0.3),
         ),
       ),
       child: Column(
@@ -718,7 +900,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             status,
             style: TextStyle(
               fontSize: 12,
-              color: isRecommended ? Colors.orange.shade700 : Colors.red.shade700,
+              color:
+                  isRecommended ? Colors.orange.shade700 : Colors.red.shade700,
             ),
           ),
           if (action != null) ...[
@@ -728,7 +911,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               style: TextStyle(
                 fontSize: 12,
                 fontStyle: FontStyle.italic,
-                color: isRecommended ? Colors.orange.shade600 : Colors.red.shade600,
+                color: isRecommended
+                    ? Colors.orange.shade600
+                    : Colors.red.shade600,
               ),
             ),
           ],
@@ -763,7 +948,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   Widget _buildProgressCard(ColorScheme colorScheme) {
     IconData stepIcon;
     Color stepColor;
-    
+
     switch (_currentStep) {
       case InstallationStep.checkingPrerequisites:
         stepIcon = Icons.fact_check;
@@ -903,11 +1088,24 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   }
 
   Widget _buildSuccessCard(ColorScheme colorScheme) {
+    final gatewayUrl = _gatewayUrl;
+    final title = _gatewayRunning
+        ? 'Gateway Ready'
+        : _setupSentToTermux
+            ? 'Setup Sent to Termux'
+            : 'Local Setup Ready';
+    final description = _gatewayRunning
+        ? 'The local OpenClaw gateway responded. You can test or connect to it from this device.'
+        : _setupSentToTermux
+            ? 'Finish the install in Termux, then return here and start or test the gateway.'
+            : 'Local setup commands are ready. Continue in Termux to finish installation.';
+
     return Card(
       color: Colors.green.withOpacity(0.1),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
@@ -915,7 +1113,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Installation Complete!',
+                    title,
                     style: TextStyle(
                       color: Colors.green[700],
                       fontWeight: FontWeight.bold,
@@ -926,66 +1124,74 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               ],
             ),
             const SizedBox(height: 12),
-            if (_gatewayUrl != null)
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colorScheme.surface,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.link, color: colorScheme.primary, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _gatewayUrl!,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.copy, size: 20),
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: _gatewayUrl!));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('URL copied to clipboard'),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: _gatewayRunning ? Colors.green : Colors.orange,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _gatewayRunning ? 'Gateway Running' : 'Gateway Stopped',
-                          style: TextStyle(
-                            color: _gatewayRunning ? Colors.green : Colors.orange,
+            Text(
+              description,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.green[800],
+                  ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.link, color: colorScheme.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          gatewayUrl,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 20),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: gatewayUrl));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('URL copied to clipboard'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: _gatewayRunning ? Colors.green : Colors.orange,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _gatewayRunning
+                            ? 'Gateway reachable'
+                            : 'Awaiting verification',
+                        style: TextStyle(
+                          color: _gatewayRunning ? Colors.green : Colors.orange,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
+            ),
           ],
         ),
       ),
@@ -993,41 +1199,6 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   }
 
   Widget _buildActionButtons(ColorScheme colorScheme) {
-    // Show different buttons based on state
-    if (_state == InstallationState.idle) {
-      // Check readiness
-      if (_isCheckingReadiness) {
-        return OutlinedButton.icon(
-          onPressed: null,
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(double.infinity, 56),
-          ),
-          icon: const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          label: const Text('Checking prerequisites...'),
-        );
-      }
-
-      final canInstall = _readinessSummary?.isReady ?? false;
-      
-      return FilledButton.icon(
-        onPressed: canInstall ? _startInstallation : null,
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(double.infinity, 56),
-          backgroundColor: canInstall ? colorScheme.primary : colorScheme.surfaceContainerHighest,
-          foregroundColor: canInstall ? colorScheme.onPrimary : colorScheme.onSurfaceVariant,
-        ),
-        icon: Icon(canInstall ? Icons.download : Icons.block),
-        label: Text(
-          canInstall ? 'Start Installation' : 'Resolve Issues First',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-      );
-    }
-
     if (_state == InstallationState.installingNodejs ||
         _state == InstallationState.installingOpenClaw ||
         _state == InstallationState.startingGateway) {
@@ -1045,17 +1216,51 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       );
     }
 
+    if (_isCheckingReadiness) {
+      return OutlinedButton.icon(
+        onPressed: null,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(double.infinity, 56),
+        ),
+        icon: const SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        label: const Text('Checking prerequisites...'),
+      );
+    }
+
+    final readinessReady = _readinessSummary?.isReady ?? false;
+    final canInstall = readinessReady && _hasRunCommandPermission;
+    final needsTermux = !_termuxService.isTermuxAvailable;
+    final needsPermission = !_hasRunCommandPermission;
+    final showPostSetup = _setupSentToTermux ||
+        _state == InstallationState.completed ||
+        _gatewayRunning;
+
     if (_state == InstallationState.error) {
       return Column(
         children: [
           FilledButton.icon(
-            onPressed: _startInstallation,
+            onPressed: canInstall ? _startInstallation : null,
             style: FilledButton.styleFrom(
               minimumSize: const Size(double.infinity, 56),
               backgroundColor: Colors.orange,
             ),
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry Installation'),
+            label: Text(
+              canInstall ? 'Retry Setup' : 'Resolve Setup Issues First',
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _copyNoRootSetupCommands,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.copy),
+            label: const Text('Copy Setup Commands'),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -1063,14 +1268,14 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
             ),
-            icon: const Icon(Icons.copy),
+            icon: const Icon(Icons.article_outlined),
             label: const Text('Copy Error Logs'),
           ),
         ],
       );
     }
 
-    if (_state == InstallationState.completed || _gatewayRunning) {
+    if (showPostSetup) {
       return Column(
         children: [
           if (!_gatewayRunning)
@@ -1081,7 +1286,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                 backgroundColor: Colors.green,
               ),
               icon: const Icon(Icons.rocket_launch),
-              label: const Text('Start Gateway'),
+              label: const Text('Send Gateway Start to Termux'),
             )
           else ...[
             FilledButton.icon(
@@ -1092,28 +1297,157 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               icon: const Icon(Icons.network_check),
               label: const Text('Test Connection'),
             ),
-            const SizedBox(height: 12),
+          ],
+          const SizedBox(height: 12),
+          if (!_gatewayRunning)
             OutlinedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ConnectGatewayScreen(),
-                  ),
-                );
-              },
+              onPressed: _testConnection,
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48),
               ),
-              icon: const Icon(Icons.link),
-              label: const Text('Connect to Gateway'),
+              icon: const Icon(Icons.network_check),
+              label: const Text('Check Gateway Reachability'),
             ),
-          ],
+          if (!_gatewayRunning) const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ConnectGatewayScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.link),
+            label: const Text('Connect to Gateway'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _launchTermuxApp,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.terminal),
+            label: const Text('Open Termux'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _copyGatewayStartCommand,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.copy_all),
+            label: const Text('Copy Gateway Command'),
+          ),
         ],
       );
     }
 
-    return const SizedBox.shrink();
+    if (needsTermux) {
+      return Column(
+        children: [
+          FilledButton.icon(
+            onPressed: () => _launchExternalUrl(
+              TermuxRunCommandService.termuxAppFdroidUrl,
+            ),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(double.infinity, 56),
+            ),
+            icon: const Icon(Icons.download),
+            label: const Text('Install Termux from F-Droid'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => _launchExternalUrl(
+              TermuxRunCommandService.termuxAppGithubUrl,
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Open Termux Releases'),
+          ),
+        ],
+      );
+    }
+
+    if (needsPermission) {
+      return Column(
+        children: [
+          FilledButton.icon(
+            onPressed: () => _openAppSettings(),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(double.infinity, 56),
+            ),
+            icon: const Icon(Icons.settings),
+            label: const Text('Grant RUN_COMMAND Permission'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _copyNoRootSetupCommands,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.copy),
+            label: const Text('Copy Setup Commands'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _launchTermuxApp,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.terminal),
+            label: const Text('Open Termux'),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        FilledButton.icon(
+          onPressed: canInstall ? _startInstallation : null,
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(double.infinity, 56),
+            backgroundColor: canInstall
+                ? colorScheme.primary
+                : colorScheme.surfaceContainerHighest,
+            foregroundColor: canInstall
+                ? colorScheme.onPrimary
+                : colorScheme.onSurfaceVariant,
+          ),
+          icon: Icon(canInstall ? Icons.download : Icons.block),
+          label: Text(
+            readinessReady
+                ? 'Send No-Root Setup to Termux'
+                : 'Resolve Issues First',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _copyNoRootSetupCommands,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 48),
+          ),
+          icon: const Icon(Icons.copy),
+          label: const Text('Copy Setup Commands'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _launchTermuxApp,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 48),
+          ),
+          icon: const Icon(Icons.terminal),
+          label: const Text('Open Termux'),
+        ),
+      ],
+    );
   }
 
   Widget _buildRequirementsCard(ColorScheme colorScheme) {
@@ -1126,8 +1460,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             Text(
               'Requirements',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
             const SizedBox(height: 12),
             _buildRequirementItem(
@@ -1155,21 +1489,34 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               true,
               isPositive: true,
             ),
+            _buildRequirementItem(
+              Icons.terminal,
+              'Termux Source',
+              'Install Termux and Termux:API from F-Droid or GitHub Releases',
+              _termuxService.isTermuxAvailable,
+            ),
+            _buildRequirementItem(
+              Icons.admin_panel_settings_outlined,
+              'App Permission',
+              'Grant this app the Termux RUN_COMMAND permission',
+              _hasRunCommandPermission,
+            ),
             const Divider(height: 24),
             Text(
               'What will be installed:',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+                    fontWeight: FontWeight.bold,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
-              '• Node.js 20+ (JavaScript runtime)\n'
-              '• OpenClaw CLI (AI Gateway)\n'
-              '• Required npm packages',
+              '• Node.js inside Termux\n'
+              '• Termux CLI package for `termux-api`\n'
+              '• OpenClaw CLI and local gateway\n'
+              '• Optional shared storage access via `termux-setup-storage`',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
+                    color: colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
@@ -1191,14 +1538,16 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
           Icon(
             icon,
             size: 20,
-            color: met ? (isPositive ? Colors.green : Colors.blue) : Colors.grey,
+            color:
+                met ? (isPositive ? Colors.green : Colors.blue) : Colors.grey,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+                Text(title,
+                    style: const TextStyle(fontWeight: FontWeight.w500)),
                 Text(
                   subtitle,
                   style: TextStyle(
@@ -1289,7 +1638,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
         levelColor = Colors.blue;
     }
 
-    final time = '${log.timestamp.hour.toString().padLeft(2, '0')}:${log.timestamp.minute.toString().padLeft(2, '0')}:${log.timestamp.second.toString().padLeft(2, '0')}';
+    final time =
+        '${log.timestamp.hour.toString().padLeft(2, '0')}:${log.timestamp.minute.toString().padLeft(2, '0')}:${log.timestamp.second.toString().padLeft(2, '0')}';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),

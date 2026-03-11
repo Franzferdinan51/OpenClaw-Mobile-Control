@@ -1,5 +1,5 @@
 /// Agent Visualization Widget
-/// 
+///
 /// Provides a visually rich display of agent activity and status
 /// for the dashboard and agent monitor screens.
 /// Inspired by agent-monitor-openclaw-dashboard design.
@@ -25,7 +25,8 @@ class AgentVisualizationWidget extends StatefulWidget {
   });
 
   @override
-  State<AgentVisualizationWidget> createState() => _AgentVisualizationWidgetState();
+  State<AgentVisualizationWidget> createState() =>
+      _AgentVisualizationWidgetState();
 }
 
 class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
@@ -47,6 +48,14 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     if (widget.gatewayStatus != oldWidget.gatewayStatus) {
       _updateFromGatewayStatus();
     }
+
+    final gatewayChanged =
+        oldWidget.gatewayService?.baseUrl != widget.gatewayService?.baseUrl ||
+            oldWidget.gatewayService?.token != widget.gatewayService?.token;
+
+    if (gatewayChanged) {
+      unawaited(_refreshAgents());
+    }
   }
 
   void _updateFromGatewayStatus() {
@@ -65,7 +74,8 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
 
   void _startAutoRefresh() {
     _refreshTimer?.cancel();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => _refreshAgents());
+    _refreshTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) => _refreshAgents());
   }
 
   Future<void> _refreshAgents() async {
@@ -94,7 +104,8 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
   @override
   Widget build(BuildContext context) {
     // Use gateway status data if we don't have live agent data
-    final displayAgents = _agents.isNotEmpty ? _agents : (widget.gatewayStatus?.agents ?? []);
+    final displayAgents =
+        _agents.isNotEmpty ? _agents : (widget.gatewayStatus?.agents ?? []);
     final displayStats = _stats ?? {};
 
     if (widget.compact) {
@@ -140,7 +151,8 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                       right: -4,
                       top: -4,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: activeAgents > 0 ? Colors.green : Colors.grey,
                           borderRadius: BorderRadius.circular(10),
@@ -166,8 +178,8 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                     Text(
                       'Agents',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                            fontWeight: FontWeight.bold,
+                          ),
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -216,9 +228,9 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
         Text(
           '$label: $value',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: color,
-            fontWeight: FontWeight.w600,
-          ),
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
         ),
       ],
     );
@@ -256,9 +268,10 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                       children: [
                         Text(
                           'Agent Activity',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style:
+                              Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                         ),
                         Text(
                           '${agents.length} agents • ${_formatStats(stats)}',
@@ -274,16 +287,16 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                 ],
               ),
               const SizedBox(height: 16),
-              
+
               // Agent list
               if (agents.isEmpty)
                 _buildEmptyState()
               else
                 ...agents.take(3).map((agent) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _buildAgentRow(agent),
-                )),
-              
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _buildAgentRow(agent),
+                    )),
+
               // Show more indicator
               if (agents.length > 3)
                 Padding(
@@ -294,8 +307,8 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
                       Text(
                         '+${agents.length - 3} more agents',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
                       ),
                       const SizedBox(width: 4),
                       Icon(
@@ -345,8 +358,8 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
           Text(
             'No active agents',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Colors.grey[600],
-            ),
+                  color: Colors.grey[600],
+                ),
           ),
         ],
       ),
@@ -361,5 +374,4 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
       onTap: widget.onTap,
     );
   }
-
 }

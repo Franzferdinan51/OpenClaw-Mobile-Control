@@ -1,5 +1,5 @@
 /// Chat Service
-/// 
+///
 /// Manages chat state and communication with OpenClaw Gateway.
 /// Uses WebSocket for real-time messaging and REST API for history.
 ///
@@ -43,19 +43,19 @@ class ChatMessageUI {
   final ChatMessageStatus status;
   final String? agentName;
   final String? agentEmoji;
-  
+
   /// Chart widget data for inline display
   final InlineChartData? chartWidget;
-  
+
   /// Weather widget data for inline display
   final WeatherWidgetData? weatherWidget;
-  
+
   /// Whether to show forecast in weather widget
   final bool showWeatherForecast;
-  
+
   /// Whether it's nighttime for weather display
   final bool isNight;
-  
+
   /// Whether this is a chart-only message (no text)
   final bool chartOnly;
 
@@ -103,13 +103,13 @@ class ChatMessageUI {
       isNight: isNight ?? this.isNight,
     );
   }
-  
+
   /// Check if this message has chart widget data
   bool get hasChartWidget => chartWidget != null;
-  
+
   /// Check if this message has weather widget data
   bool get hasWeatherWidget => weatherWidget != null;
-  
+
   /// Check if this message has any inline widget
   bool get hasInlineWidget => hasChartWidget || hasWeatherWidget;
 }
@@ -121,18 +121,16 @@ enum ChatMessageStatus {
   error,
 }
 
-/// Chat Service - Singleton
+/// Chat Service
 class ChatService {
-  static ChatService? _instance;
-
   final GatewayService _gatewayService;
   final GatewayWebSocketClient _wsClient;
-  
+
   // Tools
   late final AgentChartTool _chartTool;
   late final ChartIntentDetector _chartIntentDetector;
   late final ChartDataProvider _chartDataProvider;
-  
+
   // State
   final List<ChatMessageUI> _messages = [];
   final StreamController<List<ChatMessageUI>> _messagesController =
@@ -141,7 +139,7 @@ class ChatService {
       StreamController<ChatStatus>.broadcast();
   final StreamController<bool> _typingController =
       StreamController<bool>.broadcast();
-  
+
   ChatStatus _status = ChatStatus.disconnected;
   String? _activeSessionId;
   StreamSubscription? _wsSubscription;
@@ -149,15 +147,10 @@ class ChatService {
   Timer? _historyPollTimer;
   DateTime? _lastAssistantTimestamp;
 
-  factory ChatService({
+  ChatService({
     required GatewayService gatewayService,
-  }) {
-    _instance ??= ChatService._internal(gatewayService);
-    return _instance!;
-  }
-
-  ChatService._internal(this._gatewayService) 
-      : _wsClient = GatewayWebSocketClient() {
+  })  : _gatewayService = gatewayService,
+        _wsClient = GatewayWebSocketClient() {
     _chartTool = AgentChartTool();
     _chartIntentDetector = ChartIntentDetector();
     _chartDataProvider = ChartDataProvider();
@@ -167,27 +160,33 @@ class ChatService {
 
   /// Current chat status
   ChatStatus get status => _status;
-  
+
   /// Stream of chat status changes
   Stream<ChatStatus> get statusStream => _statusController.stream;
-  
+
   /// Current messages
   List<ChatMessageUI> get messages => List.unmodifiable(_messages);
-  
+
   /// Stream of message list changes
   Stream<List<ChatMessageUI>> get messagesStream => _messagesController.stream;
-  
+
   /// Stream of typing indicator
   Stream<bool> get typingStream => _typingController.stream;
-  
+
   /// Whether connected and ready
   bool get isConnected => _status == ChatStatus.connected;
-  
+
   /// Active session ID for agent chat
   String? get activeSessionId => _activeSessionId;
-  
+
   /// Chart tool instance
   AgentChartTool get chartTool => _chartTool;
+
+  /// Gateway base URL currently backing the chat service.
+  String get baseUrl => _gatewayService.baseUrl;
+
+  /// Gateway token currently backing the chat service.
+  String? get token => _gatewayService.token;
 
   // ==================== Connection ====================
 
@@ -207,6 +206,7 @@ class ChatService {
       }
 
       _startHistoryPolling();
+      await _fetchLatestAssistantMessages();
       _updateStatus(ChatStatus.connected);
       debugPrint('✅ Chat service ready via HTTP session $_activeSessionId');
     } catch (e) {
@@ -223,12 +223,12 @@ class ChatService {
 
     await _wsSubscription?.cancel();
     _wsSubscription = null;
-    
+
     await _wsStateSubscription?.cancel();
     _wsStateSubscription = null;
-    
+
     await _wsClient.disconnect();
-    
+
     _updateStatus(ChatStatus.disconnected);
     debugPrint('🔌 Chat service disconnected');
   }
@@ -267,7 +267,8 @@ class ChatService {
     _addMessage(userMessage);
 
     try {
-      final ok = await _gatewayService.sendAgentMessage(targetSession, content.trim());
+      final ok =
+          await _gatewayService.sendAgentMessage(targetSession, content.trim());
       if (!ok) {
         throw Exception('Gateway action send returned false');
       }
@@ -286,16 +287,35 @@ class ChatService {
   }
 
   Future<String?> _resolvePrimarySessionKey() async {
-    if (_activeSessionId != null && _activeSessionId!.isNotEmpty) return _activeSessionId;
+    if (_activeSessionId != null && _activeSessionId!.isNotEmpty)
+      return _activeSessionId;
 
     final agents = await _gatewayService.getAgents();
-    if (agents == null || agents.isEmpty) return null;
+    if (agents != null && agents.isNotEmpty) {
+      final candidates = agents.where((a) => a.key.trim().isNotEmpty).toList();
+      final preferredPool = candidates.isNotEmpty ? candidates : agents;
 
-    final preferred = agents.firstWhere(
-      (a) => !a.isSubagent && (a.name.toLowerCase() == 'main' || a.key.startsWith('agent:main:')),
-      orElse: () => agents.firstWhere((a) => !a.isSubagent, orElse: () => agents.first),
-    );
-    _activeSessionId = preferred.key;
+      final preferred = preferredPool.firstWhere(
+        (a) =>
+            !a.isSubagent &&
+            (a.name.toLowerCase() == 'main' ||
+                a.key == 'main' ||
+                a.key.startsWith('agent:main:')),
+        orElse: () => preferredPool.firstWhere(
+          (a) => !a.isSubagent && a.isActive,
+          orElse: () => preferredPool.firstWhere(
+            (a) => !a.isSubagent,
+            orElse: () => preferredPool.first,
+          ),
+        ),
+      );
+
+      if (preferred.key.trim().isNotEmpty) {
+        _activeSessionId = preferred.key;
+      }
+    }
+
+    _activeSessionId ??= 'main';
     debugPrint('🎯 Resolved primary session: $_activeSessionId');
     return _activeSessionId;
   }
@@ -314,17 +334,23 @@ class ChatService {
     final history = await _gatewayService.getChatHistory(sessionKey, limit: 20);
     if (history == null || history.isEmpty) return;
 
-    final assistantMessages = history.where((m) => m.isAssistant && m.content.trim().isNotEmpty).toList()
+    final assistantMessages = history
+        .where((m) => m.isAssistant && m.content.trim().isNotEmpty)
+        .toList()
       ..sort((a, b) => (a.timestamp ?? DateTime.fromMillisecondsSinceEpoch(0))
           .compareTo(b.timestamp ?? DateTime.fromMillisecondsSinceEpoch(0)));
 
     for (final msg in assistantMessages) {
       final ts = msg.timestamp ?? DateTime.now();
-      final alreadyExists = _messages.any((m) => !m.isUser && m.content == msg.content);
-      final isNewer = _lastAssistantTimestamp == null || ts.isAfter(_lastAssistantTimestamp!);
+      final alreadyExists =
+          _messages.any((m) => !m.isUser && m.content == msg.content);
+      final isNewer = _lastAssistantTimestamp == null ||
+          ts.isAfter(_lastAssistantTimestamp!);
       if (!alreadyExists && isNewer) {
         _addMessage(ChatMessageUI(
-          id: msg.id.isNotEmpty ? msg.id : 'assistant_${ts.millisecondsSinceEpoch}',
+          id: msg.id.isNotEmpty
+              ? msg.id
+              : 'assistant_${ts.millisecondsSinceEpoch}',
           content: msg.content,
           isUser: false,
           timestamp: ts,
@@ -348,7 +374,7 @@ class ChatService {
   void clearMessages() {
     _messages.clear();
     _messagesController.add(List.unmodifiable(_messages));
-    
+
     // Add welcome message
     _addMessage(ChatMessageUI(
       id: 'welcome',
@@ -363,7 +389,7 @@ class ChatService {
   /// Check for chart intent in user message
   void _checkForChartIntent(String message) {
     final intent = _chartIntentDetector.detect(message);
-    
+
     if (intent.isValid) {
       debugPrint('📊 Chart intent detected: ${intent.dataType}');
       _handleChartIntent(intent);
@@ -375,12 +401,12 @@ class ChatService {
     try {
       // Get data for the chart
       final data = await _chartDataProvider.getDataForIntent(intent);
-      
+
       if (data == null || data.isEmpty) {
         debugPrint('⚠️ No data available for chart');
         return;
       }
-      
+
       // Determine chart type
       InlineChartType chartType;
       switch (intent.chartType) {
@@ -398,12 +424,14 @@ class ChatService {
           break;
         default:
           // Auto-detect best chart type
-          chartType = _chartTool.createFromData(
-            title: intent.title ?? 'Data Overview',
-            data: data,
-          ).type;
+          chartType = _chartTool
+              .createFromData(
+                title: intent.title ?? 'Data Overview',
+                data: data,
+              )
+              .type;
       }
-      
+
       // Create chart
       final chartData = _chartTool.createFromData(
         title: intent.title ?? 'Data Overview',
@@ -411,7 +439,7 @@ class ChatService {
         preferredType: chartType,
         unit: _getUnitForDataType(intent.dataType),
       );
-      
+
       // Add chart message
       _addMessage(ChatMessageUI(
         id: 'chart_${DateTime.now().millisecondsSinceEpoch}',
@@ -424,7 +452,6 @@ class ChatService {
         agentName: 'DuckBot',
         agentEmoji: '🦆',
       ));
-      
     } catch (e) {
       debugPrint('❌ Error creating chart: $e');
     }
@@ -531,7 +558,7 @@ class ChatService {
 
   void _handleIncomingMessage(GatewayMessage message) {
     debugPrint('📨 Handling message: ${message.type}');
-    
+
     // Stop typing indicator
     _setTyping(false);
 
@@ -541,7 +568,7 @@ class ChatService {
       if (content != null && content.isNotEmpty) {
         // Check if response contains chart data
         final chartData = _extractChartFromResponse(message.data);
-        
+
         final agentMessage = ChatMessageUI(
           id: message.id ?? 'agent_${DateTime.now().millisecondsSinceEpoch}',
           content: content,
@@ -624,11 +651,10 @@ class ChatService {
   }
 
   /// Dispose of resources
-  void dispose() {
-    disconnect();
+  Future<void> dispose() async {
+    await disconnect();
     _messagesController.close();
     _statusController.close();
     _typingController.close();
-    _instance = null;
   }
 }
