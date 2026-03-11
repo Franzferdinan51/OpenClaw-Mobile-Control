@@ -84,9 +84,12 @@ class GatewayService {
 
   /// Get gateway status with timeout
   /// 
-  /// This is the primary health check endpoint
-  /// Tries /api/gateway first, then /api/status, then /health
+  /// Combines richer agent/session data from /api/gateway or /api/status
+  /// with version/uptime/system fields from /health when available.
   Future<GatewayStatus?> getStatus({Duration? timeout}) async {
+    GatewayStatus? primaryStatus;
+    GatewayStatus? healthStatus;
+
     // Try /api/gateway first
     try {
       final response = await http.get(
@@ -96,7 +99,7 @@ class GatewayService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
-        return GatewayStatus.fromJson(json);
+        primaryStatus = GatewayStatus.fromJson(json);
       }
     } on TimeoutException {
       print('⏱️ Gateway /api/gateway request timed out');
@@ -106,26 +109,28 @@ class GatewayService {
       print('❌ Error getting status from /api/gateway: $e');
     }
 
-    // Fallback to /api/status
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/status'),
-        headers: _headers,
-      ).timeout(timeout ?? _shortTimeout);
+    // Fallback to /api/status if needed
+    if (primaryStatus == null) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/api/status'),
+          headers: _headers,
+        ).timeout(timeout ?? _shortTimeout);
 
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        return GatewayStatus.fromJson(json);
+        if (response.statusCode == 200) {
+          final json = jsonDecode(response.body);
+          primaryStatus = GatewayStatus.fromJson(json);
+        }
+      } on TimeoutException {
+        print('⏱️ Gateway /api/status request timed out');
+      } on SocketException catch (e) {
+        print('❌ Connection refused: $e');
+      } catch (e) {
+        print('❌ Error getting status from /api/status: $e');
       }
-    } on TimeoutException {
-      print('⏱️ Gateway /api/status request timed out');
-    } on SocketException catch (e) {
-      print('❌ Connection refused: $e');
-    } catch (e) {
-      print('❌ Error getting status from /api/status: $e');
     }
 
-    // Final fallback to /health
+    // Always try /health too because it often carries version/uptime/system metrics
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/health'),
@@ -134,9 +139,9 @@ class GatewayService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
-        return GatewayStatus.fromJson(json);
+        healthStatus = GatewayStatus.fromHealthJson(json);
       } else {
-        print('⚠️ Gateway returned status ${response.statusCode}');
+        print('⚠️ Gateway returned status ${response.statusCode} from /health');
       }
     } on TimeoutException {
       print('⏱️ Gateway /health request timed out');
@@ -145,8 +150,24 @@ class GatewayService {
     } catch (e) {
       print('❌ Error getting status from /health: $e');
     }
-    
-    return null;
+
+    if (primaryStatus != null && healthStatus != null) {
+      return GatewayStatus(
+        online: primaryStatus.online || healthStatus.online,
+        version: primaryStatus.version != 'unknown' ? primaryStatus.version : healthStatus.version,
+        uptime: primaryStatus.uptime > 0 ? primaryStatus.uptime : healthStatus.uptime,
+        cpuPercent: primaryStatus.cpuPercent ?? healthStatus.cpuPercent,
+        memoryUsed: primaryStatus.memoryUsed ?? healthStatus.memoryUsed,
+        memoryTotal: primaryStatus.memoryTotal ?? healthStatus.memoryTotal,
+        agents: primaryStatus.agents,
+        nodes: primaryStatus.nodes,
+        crons: primaryStatus.crons,
+        isPaused: primaryStatus.isPaused || healthStatus.isPaused,
+        rawData: primaryStatus.rawData ?? healthStatus.rawData,
+      );
+    }
+
+    return primaryStatus ?? healthStatus;
   }
 
   /// Check if gateway is reachable
