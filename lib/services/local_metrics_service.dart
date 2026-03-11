@@ -262,6 +262,30 @@ class LocalMetricsService {
 
   /// Get metrics via HTTP API
   Future<LocalMetrics> _getMetricsViaHttp() async {
+    final helperUrl = _deriveHelperUrl();
+
+    // Try dedicated mobile metrics helper first
+    if (helperUrl != null) {
+      try {
+        final helperResponse = await _httpClient.get(
+          Uri.parse('$helperUrl/status'),
+        ).timeout(const Duration(seconds: 3));
+
+        if (helperResponse.statusCode == 200) {
+          final helperJson = jsonDecode(helperResponse.body) as Map<String, dynamic>;
+          return LocalMetrics(
+            isAvailable: true,
+            source: 'helper',
+            gatewayStatus: GatewayStatus.fromJson(helperJson),
+            systemMetrics: _extractSystemMetricsFromHelper(helperJson),
+            fetchedAt: DateTime.now(),
+          );
+        }
+      } catch (e) {
+        _log('Helper /status error: $e');
+      }
+    }
+
     try {
       // Try /health endpoint first (lightweight)
       final healthResponse = await _httpClient.get(
@@ -491,6 +515,37 @@ class LocalMetricsService {
       }
     }
     return result;
+  }
+
+  String? _deriveHelperUrl() {
+    if (_gatewayUrl == null || _gatewayUrl!.isEmpty) return null;
+    try {
+      final uri = Uri.parse(_gatewayUrl!);
+      final host = uri.host;
+      if (host.isEmpty) return null;
+      return '${uri.scheme}://$host:18790';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  SystemMetrics? _extractSystemMetricsFromHelper(Map<String, dynamic> json) {
+    try {
+      final system = json['system'] as Map<String, dynamic>?;
+      final memory = system?['memory'] as Map<String, dynamic>?;
+      return SystemMetrics(
+        cpuPercent: (system?['cpu_percent'] as num?)?.toDouble(),
+        memoryUsed: memory?['used'] as int?,
+        memoryTotal: memory?['total'] as int?,
+        memoryPercent: (memory?['percent'] as num?)?.toDouble(),
+        uptimeSeconds: system?['uptime'] as int?,
+        platform: system?['platform'] as String?,
+        hostname: system?['host'] as String?,
+      );
+    } catch (e) {
+      _log('Helper system metrics parse error: $e');
+      return null;
+    }
   }
 
   /// Update cache

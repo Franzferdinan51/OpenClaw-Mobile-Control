@@ -146,6 +146,8 @@ class ChatService {
   String? _activeSessionId;
   StreamSubscription? _wsSubscription;
   StreamSubscription? _wsStateSubscription;
+  Timer? _historyPollTimer;
+  DateTime? _lastAssistantTimestamp;
 
   factory ChatService({
     required GatewayService gatewayService,
@@ -189,7 +191,7 @@ class ChatService {
 
   // ==================== Connection ====================
 
-  /// Initialize and connect to gateway
+  /// Initialize chat service and resolve a stable HTTP chat session.
   Future<void> connect() async {
     if (_status == ChatStatus.connecting || _status == ChatStatus.connected) {
       debugPrint('⚠️ Chat already connecting/connected');
@@ -197,42 +199,16 @@ class ChatService {
     }
 
     _updateStatus(ChatStatus.connecting);
-    
+
     try {
-      // Configure WebSocket
-      _wsClient.configure(
-        baseUrl: _gatewayService.baseUrl,
-        token: _gatewayService.token,
-      );
-      
-      // Listen for WebSocket state changes
-      _wsStateSubscription?.cancel();
-      _wsStateSubscription = _wsClient.stateStream.listen((state) {
-        switch (state) {
-          case WebSocketState.connected:
-            _updateStatus(ChatStatus.connected);
-            break;
-          case WebSocketState.disconnected:
-            _updateStatus(ChatStatus.disconnected);
-            break;
-          case WebSocketState.connecting:
-          case WebSocketState.reconnecting:
-            _updateStatus(ChatStatus.connecting);
-            break;
-          case WebSocketState.error:
-            _updateStatus(ChatStatus.error);
-            break;
-        }
-      });
-      
-      // Listen for incoming messages
-      _wsSubscription?.cancel();
-      _wsSubscription = _wsClient.messageStream.listen(_handleIncomingMessage);
-      
-      // Connect
-      await _wsClient.connect();
-      
-      debugPrint('✅ Chat service connected');
+      _activeSessionId ??= await _resolvePrimarySessionKey();
+      if (_activeSessionId == null) {
+        throw Exception('No active main agent session found');
+      }
+
+      _startHistoryPolling();
+      _updateStatus(ChatStatus.connected);
+      debugPrint('✅ Chat service ready via HTTP session $_activeSessionId');
     } catch (e) {
       debugPrint('❌ Chat service connection failed: $e');
       _updateStatus(ChatStatus.error);
@@ -242,6 +218,9 @@ class ChatService {
 
   /// Disconnect from gateway
   Future<void> disconnect() async {
+    _historyPollTimer?.cancel();
+    _historyPollTimer = null;
+
     await _wsSubscription?.cancel();
     _wsSubscription = null;
     
@@ -259,10 +238,9 @@ class ChatService {
   /// Send a chat message
   Future<bool> sendMessage(String content, {String? sessionId}) async {
     if (content.trim().isEmpty) return false;
-    
-    // Ensure connected
-    if (!isConnected) {
-      debugPrint('⚠️ Not connected, attempting to connect...');
+
+    if (!isConnected || _activeSessionId == null) {
+      debugPrint('⚠️ Chat not ready, attempting to initialize...');
       try {
         await connect();
       } catch (e) {
@@ -272,7 +250,12 @@ class ChatService {
       }
     }
 
-    // Create user message
+    final targetSession = sessionId ?? _activeSessionId;
+    if (targetSession == null) {
+      _addErrorMessage('No active agent session available');
+      return false;
+    }
+
     final userMessage = ChatMessageUI(
       id: 'user_${DateTime.now().millisecondsSinceEpoch}',
       content: content.trim(),
@@ -281,28 +264,77 @@ class ChatService {
       status: ChatMessageStatus.sending,
     );
 
-    // Add to messages
     _addMessage(userMessage);
 
     try {
-      // Send via WebSocket
-      _wsClient.sendChatMessage(content, sessionId: sessionId ?? _activeSessionId);
-      
-      // Update status to sent
+      final ok = await _gatewayService.sendAgentMessage(targetSession, content.trim());
+      if (!ok) {
+        throw Exception('Gateway action send returned false');
+      }
+
       _updateMessageStatus(userMessage.id, ChatMessageStatus.sent);
-      
-      // Show typing indicator
       _setTyping(true);
-      
-      // Check for chart intent in user message
       _checkForChartIntent(content.trim());
-      
+      unawaited(_fetchLatestAssistantMessages());
       return true;
     } catch (e) {
       debugPrint('❌ Failed to send message: $e');
       _updateMessageStatus(userMessage.id, ChatMessageStatus.error);
       _addErrorMessage('Failed to send message');
       return false;
+    }
+  }
+
+  Future<String?> _resolvePrimarySessionKey() async {
+    if (_activeSessionId != null && _activeSessionId!.isNotEmpty) return _activeSessionId;
+
+    final agents = await _gatewayService.getAgents();
+    if (agents == null || agents.isEmpty) return null;
+
+    final preferred = agents.firstWhere(
+      (a) => !a.isSubagent && (a.name.toLowerCase() == 'main' || a.key.startsWith('agent:main:')),
+      orElse: () => agents.firstWhere((a) => !a.isSubagent, orElse: () => agents.first),
+    );
+    _activeSessionId = preferred.key;
+    debugPrint('🎯 Resolved primary session: $_activeSessionId');
+    return _activeSessionId;
+  }
+
+  void _startHistoryPolling() {
+    _historyPollTimer?.cancel();
+    _historyPollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      unawaited(_fetchLatestAssistantMessages());
+    });
+  }
+
+  Future<void> _fetchLatestAssistantMessages() async {
+    final sessionKey = _activeSessionId;
+    if (sessionKey == null || sessionKey.isEmpty) return;
+
+    final history = await _gatewayService.getChatHistory(sessionKey, limit: 20);
+    if (history == null || history.isEmpty) return;
+
+    final assistantMessages = history.where((m) => m.isAssistant && m.content.trim().isNotEmpty).toList()
+      ..sort((a, b) => (a.timestamp ?? DateTime.fromMillisecondsSinceEpoch(0))
+          .compareTo(b.timestamp ?? DateTime.fromMillisecondsSinceEpoch(0)));
+
+    for (final msg in assistantMessages) {
+      final ts = msg.timestamp ?? DateTime.now();
+      final alreadyExists = _messages.any((m) => !m.isUser && m.content == msg.content);
+      final isNewer = _lastAssistantTimestamp == null || ts.isAfter(_lastAssistantTimestamp!);
+      if (!alreadyExists && isNewer) {
+        _addMessage(ChatMessageUI(
+          id: msg.id.isNotEmpty ? msg.id : 'assistant_${ts.millisecondsSinceEpoch}',
+          content: msg.content,
+          isUser: false,
+          timestamp: ts,
+          status: ChatMessageStatus.delivered,
+          agentName: 'DuckBot',
+          agentEmoji: '🦆',
+        ));
+        _lastAssistantTimestamp = ts;
+        _setTyping(false);
+      }
     }
   }
 
