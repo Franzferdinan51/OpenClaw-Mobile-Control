@@ -89,14 +89,11 @@ class GatewayWebSocketClient {
   // Reconnection with exponential backoff
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
-  static const int _maxReconnectAttempts = 10;
+  static const int _maxReconnectAttempts = 8;
   static const Duration _initialReconnectDelay = Duration(seconds: 2);
   static const Duration _maxReconnectDelay = Duration(seconds: 30);
   bool _isReconnecting = false;
-
-  // Heartbeat
-  Timer? _heartbeatTimer;
-  static const Duration _heartbeatInterval = Duration(seconds: 30);
+  bool _manualDisconnect = false;
 
   // Message queue (for offline queuing)
   final List<Map<String, dynamic>> _messageQueue = [];
@@ -186,14 +183,14 @@ class GatewayWebSocketClient {
       // Wait for connection
       await _channel!.ready;
 
+      _manualDisconnect = false;
+      _cancelReconnect();
+      _isReconnecting = false;
       _updateState(WebSocketState.connected);
       _reconnectAttempts = 0;
       
       // Start listening
       _startListening();
-      
-      // Start heartbeat
-      _startHeartbeat();
       
       // Flush queued messages
       _flushQueue();
@@ -211,7 +208,7 @@ class GatewayWebSocketClient {
   Future<void> disconnect() async {
     debugPrint('🔌 Disconnecting...');
     
-    _stopHeartbeat();
+    _manualDisconnect = true;
     _cancelReconnect();
     _isReconnecting = false;
     _reconnectAttempts = 0;
@@ -260,14 +257,6 @@ class GatewayWebSocketClient {
     }
   }
 
-  /// Send a ping to keep connection alive
-  void sendPing() {
-    _send({
-      'type': 'ping',
-      'data': {'timestamp': DateTime.now().toIso8601String()},
-    });
-  }
-
   // ==================== Internal ====================
 
   void _startListening() {
@@ -283,12 +272,6 @@ class GatewayWebSocketClient {
       final json = jsonDecode(data as String) as Map<String, dynamic>;
       final message = GatewayMessage.fromJson(json);
       
-      // Handle pong responses
-      if (message.type == 'pong') {
-        debugPrint('🏓 Received pong');
-        return;
-      }
-      
       debugPrint('📥 Received: ${message.type}');
       
       // Emit to stream
@@ -302,117 +285,77 @@ class GatewayWebSocketClient {
 
   void _handleError(dynamic error) {
     debugPrint('❌ WebSocket error: $error');
-    
-    // Check current state before handling error
-    final wasConnected = _state == WebSocketState.connected;
-    final wasReconnecting = _state == WebSocketState.reconnecting;
-    
-    _updateState(WebSocketState.error);
-    
-    // Only trigger disconnection handling if we were connected
-    // Don't spam reconnection if we were never connected in the first place
-    if (wasConnected || wasReconnecting) {
-      _handleDisconnection();
-    }
+    _handleDisconnection(markError: true);
   }
 
-  void _handleDisconnection() {
-    // Prevent handling disconnection if already intentionally disconnected
-    if (_state == WebSocketState.disconnected) return;
-    
-    // Prevent duplicate reconnection scheduling with stronger guard
-    if (_isReconnecting) {
-      debugPrint('⚠️ Already reconnecting, skipping duplicate disconnection handler');
+  void _handleDisconnection({bool markError = false}) {
+    if (_manualDisconnect) {
+      debugPrint('🔌 Ignoring disconnect callback after manual disconnect');
+      _updateState(WebSocketState.disconnected);
       return;
     }
-    
-    // Immediately set state to prevent race conditions
-    final wasConnected = _state == WebSocketState.connected;
-    _stopHeartbeat();
-    _updateState(WebSocketState.disconnected);
-    
-    debugPrint('⚠️ Connection lost (wasConnected: $wasConnected)');
-    
-    // Only schedule reconnect if we were previously connected (not from error state)
-    // This prevents reconnection spam from repeated errors
-    if (wasConnected) {
+
+    if (_state == WebSocketState.disconnected && _reconnectTimer == null) {
+      return;
+    }
+
+    final shouldReconnect = _state == WebSocketState.connected || _state == WebSocketState.reconnecting;
+    _channel = null;
+
+    _updateState(markError ? WebSocketState.error : WebSocketState.disconnected);
+    debugPrint('⚠️ Connection lost (reconnect: $shouldReconnect)');
+
+    if (shouldReconnect) {
       _scheduleReconnect();
     }
   }
 
   void _scheduleReconnect() {
+    if (_manualDisconnect) return;
+
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       debugPrint('❌ Max reconnect attempts reached');
       _isReconnecting = false;
+      _updateState(WebSocketState.error);
       return;
     }
 
-    // Prevent multiple concurrent reconnect timers
-    if (_isReconnecting && _reconnectTimer != null) {
-      debugPrint('⚠️ Reconnect timer already active, skipping');
+    if (_isReconnecting || _reconnectTimer != null) {
+      debugPrint('⚠️ Reconnect already scheduled');
       return;
     }
-    
-    _cancelReconnect();
+
     _updateState(WebSocketState.reconnecting);
     _isReconnecting = true;
 
-    // Calculate exponential backoff delay: 2s, 4s, 8s, 16s, max 30s
-    // Add jitter to prevent thundering herd
-    final baseDelaySeconds = (_initialReconnectDelay.inSeconds * 
-        (1 << _reconnectAttempts.clamp(0, 4))).clamp(
-          _initialReconnectDelay.inSeconds, 
-          _maxReconnectDelay.inSeconds
-        );
-    // Add up to 1 second of jitter
-    final jitterMs = (DateTime.now().millisecondsSinceEpoch % 1000);
+    final exponent = _reconnectAttempts.clamp(0, 4);
+    final baseDelaySeconds = (_initialReconnectDelay.inSeconds * (1 << exponent))
+        .clamp(_initialReconnectDelay.inSeconds, _maxReconnectDelay.inSeconds);
+    final jitterMs = DateTime.now().millisecondsSinceEpoch % 750;
     final delay = Duration(seconds: baseDelaySeconds, milliseconds: jitterMs);
-    
+
     debugPrint('🔄 Scheduling reconnect in ${delay.inSeconds}s (attempt ${_reconnectAttempts + 1}/$_maxReconnectAttempts)');
-    
+
     _reconnectTimer = Timer(delay, () async {
-      // Check if still should reconnect (not manually disconnected)
-      if (_state == WebSocketState.disconnected || 
-          _state == WebSocketState.reconnecting) {
-        _reconnectAttempts++;
-        debugPrint('🔄 Reconnecting (attempt $_reconnectAttempts/$_maxReconnectAttempts)...');
-        
-        try {
-          await connect();
-          // Reset flag on successful connection
-          _isReconnecting = false;
-        } catch (e) {
-          debugPrint('❌ Reconnect failed: $e');
-          // Reset flag before scheduling next attempt
-          _isReconnecting = false;
-          // Continue with exponential backoff
-          _scheduleReconnect();
-        }
-      } else {
-        // Connection was restored or manually disconnected
+      _reconnectTimer = null;
+      _reconnectAttempts++;
+
+      try {
+        await connect();
+      } catch (e) {
+        debugPrint('❌ Reconnect failed: $e');
         _isReconnecting = false;
-        debugPrint('⚠️ Skipping reconnect - state is: $_state');
+        _scheduleReconnect();
+        return;
       }
+
+      _isReconnecting = false;
     });
   }
 
   void _cancelReconnect() {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-  }
-
-  void _startHeartbeat() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
-      if (isConnected) {
-        sendPing();
-      }
-    });
-  }
-
-  void _stopHeartbeat() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
   }
 
   void _queueMessage(Map<String, dynamic> message) {

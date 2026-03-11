@@ -16,7 +16,6 @@ import 'screens/browser_control_screen.dart';
 import 'screens/workflows_screen.dart';
 import 'screens/scheduled_tasks_screen.dart';
 import 'screens/model_hub_screen.dart';
-import 'screens/global_search_screen.dart';
 import 'screens/local_installer_screen.dart';
 
 class DuckBotGoApp extends StatefulWidget {
@@ -852,18 +851,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       body: IndexedStack(
         index: _currentIndex,
         children: _buildScreens(),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => GlobalSearchScreen(gatewayService: _gatewayService),
-            ),
-          );
-        },
-        child: const Icon(Icons.search),
-        tooltip: 'Search',
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
