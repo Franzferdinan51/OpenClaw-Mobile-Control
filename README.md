@@ -1,13 +1,13 @@
 # DuckBot Go 🦆📱
 
-**Version:** 3.0.0  
-**Release Date:** March 10, 2026  
+**Version:** 3.0.1  
+**Release Date:** March 11, 2026  
 **Status:** ✅ **PRODUCTION READY**  
 **Platform:** Android (Android 16+)  
-**APK Size:** 75.9MB  
-**Test Coverage:** 97% (37/38 tests pass)  
+**APK Size:** 100.6MB (release)  
+**Validation:** `flutter test` ✅ · `flutter build apk --debug` ✅ · `flutter build apk --release` ✅  
 **GitHub:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control  
-**Release:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.0
+**Release:** https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.1
 
 ---
 
@@ -15,8 +15,8 @@
 
 ### **Download APK**
 ```bash
-# Latest release (v3.0.0)
-wget https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/download/v3.0.0/app-release.apk
+# Latest release (v3.0.1)
+wget https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/download/v3.0.1/app-release.apk
 
 # Or build from source
 cd /Users/duckets/Desktop/Android-App-DuckBot
@@ -68,7 +68,7 @@ curl http://YOUR_IP:18789/health
 
 ---
 
-## ✨ Features (v3.0.0 - 100% Complete!)
+## ✨ Features (v3.0.1 Stabilization Release)
 
 ### 🎨 Inline Generative UI (ChatGPT-Style)
 
@@ -175,7 +175,7 @@ curl http://YOUR_IP:18789/health
 - OpenClaw gateway (for full functionality)
 
 ### **Via APK Download**
-1. Download `app-release.apk` from [releases](https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.0)
+1. Download `app-release.apk` from [releases](https://github.com/Franzferdinan51/OpenClaw-Mobile-Control/releases/tag/v3.0.1)
 2. Transfer to your Android device
 3. Enable "Install from Unknown Sources" in Settings
 4. Install the APK
@@ -289,7 +289,7 @@ DuckBot: "Here's your token usage:"
 
 ---
 
-## 🔮 Coming in v3.0.1
+## 🔮 Coming in v3.0.2
 
 ### **Termux Integration**
 - ⏳ Local gateway hosting on Android device
@@ -354,6 +354,6 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-**Download and enjoy DuckBot Go v3.0.0!** 🦆✨
+**Download and enjoy DuckBot Go v3.0.1!** 🦆✨
 
 **Last Updated:** March 10, 2026

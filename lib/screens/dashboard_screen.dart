@@ -916,7 +916,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildSystemHealthCard() {
     final cpuPercent = _status?.cpuPercent ?? 0.0;
-    final memoryPercent = _status?.memoryTotal != null && _status!.memoryTotal! > 0
+    final memoryPercent = (_status?.memoryTotal ?? 0) > 0 && _status?.memoryUsed != null
         ? (_status!.memoryUsed!.toDouble() / _status!.memoryTotal!.toDouble() * 100.0)
         : 0.0;
     
@@ -1013,7 +1013,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 )),
                 _buildQuickActionButton('Chat', Icons.chat, () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const ChatScreen()),
+                  MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: _service)),
                 )),
               ],
             ),

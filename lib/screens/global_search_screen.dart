@@ -161,7 +161,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const ChatScreen(),
+        builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
       ),
     );
     
@@ -201,7 +201,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const ChatScreen(),
+                  builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
                 ),
               );
             },
@@ -213,7 +213,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => const ChatScreen(),
+          builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
         ),
       );
       
@@ -277,7 +277,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => const ChatScreen(),
+            builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
           ),
         );
         break;
@@ -286,7 +286,7 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => const ChatScreen(),
+            builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
           ),
         );
         break;

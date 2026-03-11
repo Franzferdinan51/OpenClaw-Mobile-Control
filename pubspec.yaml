@@ -1,7 +1,7 @@
 name: duckbot_go
 description: DuckBot Go - Mobile companion for DuckBot with inline generative UI
 publish_to: 'none'
-version: 3.0.0+300  # Major release: Inline Generative UI + ACP Agents
+version: 3.0.1+301  # Bug fix release: Gateway service routing fix + minor bug fixes
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

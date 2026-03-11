@@ -5,7 +5,21 @@ All notable changes to DuckBot Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.1+301] - 2026-03-10
+
+### Fixed
+- **CRITICAL:** Chat send button now correctly routes to OpenClaw gateway
+  - Fixed: ChatScreen was created without gatewayService in DashboardScreen, QuickActionsScreen, and GlobalSearchScreen
+  - Messages now properly send via WebSocket to the backend
+- Memory percent divide by zero bug in dashboard (BUG-004)
+- Removed backup `lib-full-backup` folder from analysis (was causing false compilation errors)
+
+### Changed
+- QuickActionsScreen now accepts gatewayService parameter
+- _ActionsHubScreen now passes gatewayService to QuickActionsScreen
+- All ChatScreen navigations now pass gatewayService for proper message routing
+
+## [3.0.0+300] - 2026-03-10
 
 ### Added
 - Inline generative UI (ChatGPT-style)
@@ -28,14 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inline UI instead of separate screens
 - ACP agents available in threads
 
-### Fixed
-- [TO BE COMPLETED - 25 compilation errors to fix]
-
-### Known Issues
-- 25 compilation errors preventing build
-- Missing font assets
-- Some deprecated packages need updating
-
 ---
 
 ## [1.0.0+1] - 2026-03-10
@@ -48,25 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Control panel
 - Logs viewer
 - Settings
-
-### Known Issues
-- Build fails due to compilation errors
-- Missing LICENSE file
-- Missing CHANGELOG.md
-
----
-
-## [Planned: 3.0.0+300]
-
-### To Do
-- Fix all 25 compilation errors
-- Add LICENSE file (MIT)
-- Add CHANGELOG.md
-- Update deprecated packages
-- Add font assets
-- Fix test suite
-- Comprehensive testing
-- Public release
 
 ---
 

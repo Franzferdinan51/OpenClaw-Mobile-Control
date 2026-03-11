@@ -894,6 +894,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     screens.add(_ActionsHubScreen(
       mode: mode,
       showAdvanced: mode != AppMode.basic,
+      gatewayService: _gatewayService,
     ));
     
     // Tab 3: Tools (Power User and Developer only)
@@ -932,10 +933,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 class _ActionsHubScreen extends StatefulWidget {
   final AppMode mode;
   final bool showAdvanced;
+  final GatewayService? gatewayService;
 
   const _ActionsHubScreen({
     this.mode = AppMode.basic,
     this.showAdvanced = false,
+    this.gatewayService,
   });
 
   @override
@@ -999,7 +1002,7 @@ class _ActionsHubScreenState extends State<_ActionsHubScreen> with SingleTickerP
       body: TabBarView(
         controller: _tabController,
         children: [
-          QuickActionsScreen(showAdvanced: widget.showAdvanced),
+          QuickActionsScreen(showAdvanced: widget.showAdvanced, gatewayService: widget.gatewayService),
           ControlScreen(showAdvanced: widget.showAdvanced),
         ],
       ),

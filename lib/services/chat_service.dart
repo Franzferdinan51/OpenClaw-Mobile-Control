@@ -22,10 +22,7 @@ import 'package:flutter/foundation.dart';
 import 'gateway_service.dart';
 import 'gateway_websocket_client.dart';
 import 'agent_chart_tool.dart';
-import 'agent_weather_tool.dart';
-import 'weather_service.dart';
 import '../utils/chart_intent_detector.dart';
-import '../utils/weather_intent_detector.dart';
 import '../models/inline_widget.dart';
 
 /// Chat state for the UI

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import '../services/termux_service.dart';
+import '../services/gateway_service.dart';
 import 'termux_screen.dart';
 import 'chat_screen.dart';
 
 class QuickActionsScreen extends StatefulWidget {
   final bool showAdvanced;
+  final GatewayService? gatewayService;
 
-  const QuickActionsScreen({super.key, this.showAdvanced = false});
+  const QuickActionsScreen({super.key, this.showAdvanced = false, this.gatewayService});
 
   @override
   State<QuickActionsScreen> createState() => _QuickActionsScreenState();
@@ -17,7 +19,6 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
   final Map<String, bool> _loadingActions = {};
   final TermuxService _termuxService = TermuxService();
   String? _openClawVersion;
-  bool _isTermuxAvailable = false;
 
   @override
   void initState() {
@@ -28,7 +29,6 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
   Future<void> _checkTermuxStatus() async {
     await _termuxService.initialize();
     setState(() {
-      _isTermuxAvailable = _termuxService.isTermuxAvailable;
       _openClawVersion = _termuxService.openClawVersion;
     });
   }
@@ -255,10 +255,10 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
       setState(() {
         _loadingActions[actionName] = false;
       });
-      // Navigate to chat screen
+      // Navigate to chat screen with gateway service
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => const ChatScreen()),
+        MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: widget.gatewayService)),
       );
       return;
     }
