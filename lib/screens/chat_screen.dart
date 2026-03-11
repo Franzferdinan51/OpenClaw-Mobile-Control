@@ -149,8 +149,18 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       });
       
-      // Connect to gateway
-      _connectToGateway();
+      // Check if already connected (singleton may have existing connection)
+      if (_chatService!.isConnected) {
+        debugPrint('✅ ChatService already connected');
+        setState(() {
+          _isConnected = true;
+        });
+        // Sync existing messages
+        _syncMessagesFromService(_chatService!.messages);
+      } else {
+        // Connect to gateway if not connected
+        _connectToGateway();
+      }
     }
   }
   
@@ -243,10 +253,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    // Cancel subscriptions but don't dispose ChatService singleton
+    // The service persists across navigation to maintain connection
     _messagesSubscription?.cancel();
     _statusSubscription?.cancel();
     _typingSubscription?.cancel();
-    _chatService?.dispose();
+    // Don't call _chatService?.dispose() - it's a singleton that should persist
     super.dispose();
   }
 

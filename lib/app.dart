@@ -33,6 +33,9 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
   bool _autoConnectFailed = false;
   bool _isFirstLaunch = false;
   String? _initialError;
+  
+  // Global navigator key for route handling
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -180,6 +183,28 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
           theme: themeService.getLightTheme(),
           darkTheme: themeService.getDarkTheme(),
           themeMode: themeService.themeMode,
+          navigatorKey: _navigatorKey,
+          // Named routes for navigation with tab selection
+          routes: {
+            '/main': (context) => _isLoading
+                ? const _LoadingScreen()
+                : _isFirstLaunch || _autoConnectFailed
+                    ? _GuidedSetupScreen(
+                        error: _initialError,
+                        onComplete: () {
+                          setState(() {
+                            _isFirstLaunch = false;
+                            _autoConnectFailed = false;
+                            _loadGatewayService();
+                          });
+                        },
+                      )
+                    : MainNavigationScreen(
+                        gatewayService: _gatewayService,
+                        onGatewayChanged: _onGatewayChanged,
+                        initialTab: _getInitialTab(context),
+                      ),
+          },
           home: _isLoading
               ? const _LoadingScreen()
               : _isFirstLaunch || _autoConnectFailed
@@ -200,6 +225,27 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
         );
       },
     );
+  }
+  
+  /// Get initial tab from route parameters
+  int? _getInitialTab(BuildContext context) {
+    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    if (args != null && args.containsKey('tab')) {
+      final tab = args['tab'] as String;
+      switch (tab) {
+        case 'chat':
+          return 1;
+        case 'home':
+          return 0;
+        case 'actions':
+          return 2;
+        case 'settings':
+          return 3;
+        default:
+          return null;
+      }
+    }
+    return null;
   }
 }
 
@@ -747,11 +793,13 @@ class _GuidedSetupScreen extends StatelessWidget {
 class MainNavigationScreen extends StatefulWidget {
   final GatewayService? gatewayService;
   final VoidCallback onGatewayChanged;
+  final int? initialTab;
 
   const MainNavigationScreen({
     super.key,
     this.gatewayService,
     required this.onGatewayChanged,
+    this.initialTab,
   });
 
   @override
@@ -759,7 +807,7 @@ class MainNavigationScreen extends StatefulWidget {
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
-  int _currentIndex = 0;
+  late int _currentIndex;
   late GatewayService? _gatewayService;
   final AppSettingsService _appSettings = AppSettingsService();
 
@@ -767,6 +815,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void initState() {
     super.initState();
     _gatewayService = widget.gatewayService;
+    _currentIndex = widget.initialTab ?? 0;
     _appSettings.addListener(_onSettingsChanged);
   }
 

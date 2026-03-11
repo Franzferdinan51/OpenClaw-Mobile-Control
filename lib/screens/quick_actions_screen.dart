@@ -255,10 +255,14 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
       setState(() {
         _loadingActions[actionName] = false;
       });
-      // Navigate to chat screen with gateway service
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: widget.gatewayService)),
+      // Pop back to main screen - user can tap Chat tab
+      // This preserves the existing ChatScreen state and connection
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Tap Chat to continue'),
+          duration: const Duration(seconds: 2),
+        ),
       );
       return;
     }

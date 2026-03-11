@@ -302,27 +302,42 @@ class GatewayWebSocketClient {
 
   void _handleError(dynamic error) {
     debugPrint('❌ WebSocket error: $error');
+    
+    // Check current state before handling error
+    final wasConnected = _state == WebSocketState.connected;
+    final wasReconnecting = _state == WebSocketState.reconnecting;
+    
     _updateState(WebSocketState.error);
-    _handleDisconnection();
+    
+    // Only trigger disconnection handling if we were connected
+    // Don't spam reconnection if we were never connected in the first place
+    if (wasConnected || wasReconnecting) {
+      _handleDisconnection();
+    }
   }
 
   void _handleDisconnection() {
     // Prevent handling disconnection if already intentionally disconnected
     if (_state == WebSocketState.disconnected) return;
     
-    // Prevent duplicate reconnection scheduling
+    // Prevent duplicate reconnection scheduling with stronger guard
     if (_isReconnecting) {
       debugPrint('⚠️ Already reconnecting, skipping duplicate disconnection handler');
       return;
     }
     
+    // Immediately set state to prevent race conditions
+    final wasConnected = _state == WebSocketState.connected;
     _stopHeartbeat();
     _updateState(WebSocketState.disconnected);
     
-    debugPrint('⚠️ Connection lost');
+    debugPrint('⚠️ Connection lost (wasConnected: $wasConnected)');
     
-    // Schedule reconnection
-    _scheduleReconnect();
+    // Only schedule reconnect if we were previously connected (not from error state)
+    // This prevents reconnection spam from repeated errors
+    if (wasConnected) {
+      _scheduleReconnect();
+    }
   }
 
   void _scheduleReconnect() {
@@ -334,6 +349,7 @@ class GatewayWebSocketClient {
 
     // Prevent multiple concurrent reconnect timers
     if (_isReconnecting && _reconnectTimer != null) {
+      debugPrint('⚠️ Reconnect timer already active, skipping');
       return;
     }
     
@@ -342,27 +358,40 @@ class GatewayWebSocketClient {
     _isReconnecting = true;
 
     // Calculate exponential backoff delay: 2s, 4s, 8s, 16s, max 30s
-    final delaySeconds = (_initialReconnectDelay.inSeconds * 
+    // Add jitter to prevent thundering herd
+    final baseDelaySeconds = (_initialReconnectDelay.inSeconds * 
         (1 << _reconnectAttempts.clamp(0, 4))).clamp(
           _initialReconnectDelay.inSeconds, 
           _maxReconnectDelay.inSeconds
         );
-    final delay = Duration(seconds: delaySeconds);
+    // Add up to 1 second of jitter
+    final jitterMs = (DateTime.now().millisecondsSinceEpoch % 1000);
+    final delay = Duration(seconds: baseDelaySeconds, milliseconds: jitterMs);
     
-    debugPrint('🔄 Scheduling reconnect in ${delaySeconds}s (attempt ${_reconnectAttempts + 1}/$_maxReconnectAttempts)');
+    debugPrint('🔄 Scheduling reconnect in ${delay.inSeconds}s (attempt ${_reconnectAttempts + 1}/$_maxReconnectAttempts)');
     
     _reconnectTimer = Timer(delay, () async {
-      _reconnectAttempts++;
-      debugPrint('🔄 Reconnecting (attempt $_reconnectAttempts/$_maxReconnectAttempts)...');
-      
-      try {
-        await connect();
+      // Check if still should reconnect (not manually disconnected)
+      if (_state == WebSocketState.disconnected || 
+          _state == WebSocketState.reconnecting) {
+        _reconnectAttempts++;
+        debugPrint('🔄 Reconnecting (attempt $_reconnectAttempts/$_maxReconnectAttempts)...');
+        
+        try {
+          await connect();
+          // Reset flag on successful connection
+          _isReconnecting = false;
+        } catch (e) {
+          debugPrint('❌ Reconnect failed: $e');
+          // Reset flag before scheduling next attempt
+          _isReconnecting = false;
+          // Continue with exponential backoff
+          _scheduleReconnect();
+        }
+      } else {
+        // Connection was restored or manually disconnected
         _isReconnecting = false;
-      } catch (e) {
-        debugPrint('❌ Reconnect failed: $e');
-        // Continue with exponential backoff
-        _isReconnecting = false;
-        _scheduleReconnect();
+        debugPrint('⚠️ Skipping reconnect - state is: $_state');
       }
     });
   }

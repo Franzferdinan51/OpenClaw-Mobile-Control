@@ -1077,10 +1077,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   context,
                   MaterialPageRoute(builder: (context) => const LogsScreen()),
                 )),
-                _buildQuickActionButton('Chat', Icons.chat, () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: _service)),
-                )),
+                _buildQuickActionButton('Chat', Icons.chat, () {
+                  // Pop to main screen - user can tap Chat tab
+                  // This preserves the existing ChatScreen state
+                  Navigator.pop(context);
+                }),
               ],
             ),
           ],

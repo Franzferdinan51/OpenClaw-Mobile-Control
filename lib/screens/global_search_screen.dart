@@ -4,7 +4,6 @@ import '../services/gateway_service.dart';
 import '../data/agency_agents.dart';
 import 'agent_detail_screen.dart';
 import 'settings_screen.dart';
-import 'chat_screen.dart';
 
 /// Global search screen with search bar, filters, and results
 class GlobalSearchScreen extends StatefulWidget {
@@ -156,24 +155,28 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
   }
 
   void _navigateToMessage(SearchResult result) {
-    // Navigate to chat screen
+    // Pop search screen to return to main navigation
     Navigator.pop(context);
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
-      ),
-    );
+    
+    // The user can then tap the Chat tab in bottom nav
+    // This preserves the existing ChatScreen state and WebSocket connection
     
     // Show snackbar with message preview
     if (result.metadata?['content'] != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Found: "${result.title}"',
+            'Found: "${result.title}" - Tap Chat to continue',
             overflow: TextOverflow.ellipsis,
           ),
-          duration: const Duration(seconds: 2),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Chat',
+            onPressed: () {
+              // User wants to go to chat - they're already on main screen
+              // The bottom nav chat tab is available
+            },
+          ),
         ),
       );
     }
@@ -198,28 +201,16 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
             agent: agent,
             onActivate: () {
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
-                ),
-              );
+              // Return to main screen - user can tap Chat tab
             },
           ),
         ),
       );
     } else if (metadata?['sessionKey'] != null) {
-      // Active agent session - navigate to chat
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
-        ),
-      );
-      
+      // Active agent session - user can tap Chat tab
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Agent: ${metadata?['agentName']}'),
+          content: Text('Agent: ${metadata?['agentName']} - Tap Chat to continue'),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -274,19 +265,13 @@ class _GlobalSearchScreenState extends State<GlobalSearchScreen> {
       case 'weather':
       case 'forecast':
       case 'chat':
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
-          ),
-        );
-        break;
       case 'research':
       case 'code':
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ChatScreen(gatewayService: widget.gatewayService),
+        // Return to main screen - user can tap Chat tab
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tap Chat to ${result.title}'),
+            duration: const Duration(seconds: 2),
           ),
         );
         break;
