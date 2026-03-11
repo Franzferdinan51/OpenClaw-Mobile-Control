@@ -94,6 +94,8 @@ class GatewayWebSocketClient {
   static const Duration _maxReconnectDelay = Duration(seconds: 30);
   bool _isReconnecting = false;
   bool _manualDisconnect = false;
+  Timer? _heartbeatTimer;
+  static const Duration _heartbeatInterval = Duration(seconds: 5);
 
   // Message queue (for offline queuing)
   final List<Map<String, dynamic>> _messageQueue = [];
@@ -191,6 +193,9 @@ class GatewayWebSocketClient {
       
       // Start listening
       _startListening();
+
+      // Keep the gateway connection warm on mobile networks / idle timeouts
+      _startHeartbeat();
       
       // Flush queued messages
       _flushQueue();
@@ -209,6 +214,7 @@ class GatewayWebSocketClient {
     debugPrint('🔌 Disconnecting...');
     
     _manualDisconnect = true;
+    _stopHeartbeat();
     _cancelReconnect();
     _isReconnecting = false;
     _reconnectAttempts = 0;
@@ -300,6 +306,7 @@ class GatewayWebSocketClient {
     }
 
     final shouldReconnect = _state == WebSocketState.connected || _state == WebSocketState.reconnecting;
+    _stopHeartbeat();
     _channel = null;
 
     _updateState(markError ? WebSocketState.error : WebSocketState.disconnected);
@@ -356,6 +363,27 @@ class GatewayWebSocketClient {
   void _cancelReconnect() {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+  }
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
+      if (!isConnected || _channel == null) return;
+      try {
+        _channel!.sink.add(jsonEncode({
+          'type': 'ping',
+          'data': {'ts': DateTime.now().toIso8601String()},
+          'timestamp': DateTime.now().toIso8601String(),
+        }));
+      } catch (_) {
+        // Let normal disconnect handling take over if the socket is bad.
+      }
+    });
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
   }
 
   void _queueMessage(Map<String, dynamic> message) {
