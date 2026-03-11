@@ -175,16 +175,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _refreshStatus,
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const SettingsScreen()),
-            ),
+            tooltip: 'Refresh',
           ),
         ],
       ),
+      drawer: _buildNavigationDrawer(),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null || _status == null
@@ -1019,19 +1014,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
               runSpacing: 8,
               children: [
                 _buildQuickActionButton('Refresh', Icons.refresh, () => _refreshStatus()),
-                _buildQuickActionButton('Settings', Icons.settings, () => Navigator.push(
+                _buildQuickActionButton('Agents', Icons.people, () => _navigateToAgentMonitor()),
+                _buildQuickActionButton('Chat', Icons.chat, () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                  MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: _service)),
                 )),
                 _buildQuickActionButton('Logs', Icons.list, () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const LogsScreen()),
                 )),
-                _buildQuickActionButton('Chat', Icons.chat, () {
-                  // Pop to main screen - user can tap Chat tab
-                  // This preserves the existing ChatScreen state
-                  Navigator.pop(context);
-                }),
+                _buildQuickActionButton('Settings', Icons.settings, () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                )),
               ],
             ),
           ],
@@ -1047,6 +1042,178 @@ class _DashboardScreenState extends State<DashboardScreen> {
       label: Text(label),
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+    );
+  }
+
+  Widget _buildNavigationDrawer() {
+    final agentCount = _status?.agents?.length ?? 0;
+    final nodeCount = _status?.nodes?.length ?? 0;
+    
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          // Drawer header
+          DrawerHeader(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Theme.of(context).colorScheme.primary,
+                  Theme.of(context).colorScheme.primaryContainer,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                const Icon(
+                  Icons.dns,
+                  color: Colors.white,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'OpenClaw Mobile',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  _gatewayName ?? 'Dashboard',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.white.withOpacity(0.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Navigation items
+          ListTile(
+            leading: Icon(Icons.home, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Dashboard'),
+            selected: true,
+            onTap: () => Navigator.pop(context),
+          ),
+          ListTile(
+            leading: Icon(Icons.people, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Agent Monitor'),
+            subtitle: agentCount > 0 ? Text('$agentCount agents') : null,
+            onTap: () {
+              Navigator.pop(context);
+              _navigateToAgentMonitor();
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.chat, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Chat'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => ChatScreen(gatewayService: _service)),
+              );
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.list, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Logs'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const LogsScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.phone_android, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Termux'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const TermuxScreen()),
+              );
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(Icons.devices, color: Theme.of(context).colorScheme.primary),
+            title: Text('Nodes ($nodeCount)'),
+            onTap: () {
+              Navigator.pop(context);
+              _showNodesDialog();
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(Icons.settings, color: Theme.of(context).colorScheme.primary),
+            title: const Text('Settings'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showNodesDialog() {
+    final nodes = _status?.nodes ?? [];
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.devices),
+            SizedBox(width: 8),
+            Text('Connected Nodes'),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: nodes.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'No nodes connected',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: nodes.length,
+                  itemBuilder: (context, index) {
+                    final node = nodes[index];
+                    return ListTile(
+                      leading: Icon(
+                        node.status == 'connected' ? Icons.check_circle : Icons.error,
+                        color: node.status == 'connected' ? Colors.green : Colors.red,
+                      ),
+                      title: Text(node.name),
+                      subtitle: Text('${node.connectionType ?? 'unknown'} ${node.ip != null ? '(${node.ip})' : ''}'),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

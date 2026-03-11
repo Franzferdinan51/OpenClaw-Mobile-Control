@@ -2,11 +2,13 @@
 /// 
 /// Provides a visually rich display of agent activity and status
 /// for the dashboard and agent monitor screens.
+/// Inspired by agent-monitor-openclaw-dashboard design.
 
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../models/gateway_status.dart';
 import '../services/gateway_service.dart';
+import 'agent_card_widget.dart';
 
 class AgentVisualizationWidget extends StatefulWidget {
   final GatewayService? gatewayService;
@@ -319,6 +321,15 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
     return 'Monitoring...';
   }
 
+  String _formatTokens(int tokens) {
+    if (tokens >= 1000000) {
+      return '${(tokens / 1000000).toStringAsFixed(1)}M';
+    } else if (tokens >= 1000) {
+      return '${(tokens / 1000).toStringAsFixed(0)}K';
+    }
+    return tokens.toString();
+  }
+
   Widget _buildEmptyState() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -343,97 +354,12 @@ class _AgentVisualizationWidgetState extends State<AgentVisualizationWidget> {
   }
 
   Widget _buildAgentRow(dynamic agent) {
-    final isActive = (agent.isActive ?? false) || (agent.status ?? 'unknown') == 'active';
-    final statusColor = isActive ? Colors.green : Colors.grey;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey[100]!,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          // Status indicator
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: statusColor,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: statusColor.withValues(alpha: 0.4),
-                  blurRadius: 4,
-                  spreadRadius: 1,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Agent info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  agent.name ?? 'Unknown',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (agent.currentTask != null && (agent.currentTask as String).isNotEmpty)
-                  Text(
-                    agent.currentTask!,
-                    style: Theme.of(context).textTheme.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
-            ),
-          ),
-          // Model badge
-          if (agent.model != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.purple.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                _shortenModel(agent.model!),
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.purple[700],
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-        ],
-      ),
+    // Use the new AgentCardWidget for better visualization
+    return AgentCardWidget(
+      agent: agent,
+      compact: true,
+      onTap: widget.onTap,
     );
   }
 
-  String _shortenModel(String model) {
-    // Shorten long model names
-    if (model.contains('/')) {
-      final parts = model.split('/');
-      return parts.last;
-    }
-    if (model.length > 20) {
-      return '${model.substring(0, 17)}...';
-    }
-    return model;
-  }
-
-  String _formatTokens(int tokens) {
-    if (tokens >= 1000000) {
-      return '${(tokens / 1000000).toStringAsFixed(1)}M';
-    } else if (tokens >= 1000) {
-      return '${(tokens / 1000).toStringAsFixed(1)}K';
-    }
-    return tokens.toString();
-  }
 }
