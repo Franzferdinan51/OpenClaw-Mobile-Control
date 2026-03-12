@@ -2,7 +2,7 @@
 
 DuckBot Go is an Android Flutter client for OpenClaw gateway control, chat, local runtime setup, and agent monitoring.
 
-**Version:** 3.0.8  
+**Version:** 3.0.9  
 **Last Updated:** March 11, 2026  
 **Status:** Active development  
 **Platform:** Android  

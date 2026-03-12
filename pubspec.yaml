@@ -1,7 +1,7 @@
 name: duckbot_go
 description: DuckBot Go - Mobile companion for DuckBot with inline generative UI
 publish_to: 'none'
-version: 3.0.8+308  # Merged Codex desktop pass + Termux Hub additions
+version: 3.0.9+309  # Merged Codex desktop pass + backup/device identity additions
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -13,6 +13,7 @@ dependencies:
   http: ^1.1.0
   web_socket_channel: ^2.4.0
   shared_preferences: ^2.2.2
+  cryptography: ^2.7.0
   provider: ^6.1.1
   path_provider: ^2.1.2
   uuid: ^4.2.2

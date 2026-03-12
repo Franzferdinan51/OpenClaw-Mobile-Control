@@ -242,7 +242,8 @@ class DiscoveryService {
   /// 2. Local subnet scanning (all IPs in detected subnets)
   /// 3. Common network ranges scan (fallback)
   /// 4. Tailscale network scan
-  Future<List<GatewayConnection>> scan() async {
+  Future<List<GatewayConnection>> scan(
+      {bool stopAtFirstHealthy = false}) async {
     if (_isDisposed) return _discovered;
 
     if (_isScanning) {
@@ -270,6 +271,11 @@ class DiscoveryService {
         found.add(localhostGateway);
         _log('success', 'Gateway found on localhost!',
             details: localhostGateway.url);
+        if (stopAtFirstHealthy) {
+          _discovered = found;
+          _updateProgress(100, _totalIpsToScan, 'Found localhost gateway');
+          return _discovered;
+        }
       }
 
       // STEP 2: Try mDNS discovery
@@ -282,6 +288,11 @@ class DiscoveryService {
             found.add(gateway);
             _log('success', 'Gateway found via mDNS', details: gateway.url);
           }
+        }
+        if (stopAtFirstHealthy && found.isNotEmpty) {
+          _discovered = found;
+          _updateProgress(100, _totalIpsToScan, 'Found gateway via mDNS');
+          return _discovered;
         }
       } catch (e) {
         _log('warning', 'mDNS discovery failed', details: e.toString());
@@ -297,6 +308,11 @@ class DiscoveryService {
           _log('success', 'Gateway found on local subnet',
               details: gateway.url);
         }
+      }
+      if (stopAtFirstHealthy && found.isNotEmpty) {
+        _discovered = found;
+        _updateProgress(100, _totalIpsToScan, 'Found gateway on local subnet');
+        return _discovered;
       }
 
       // STEP 4: Scan common network ranges as fallback
@@ -314,14 +330,20 @@ class DiscoveryService {
       }
 
       // STEP 5: Scan Tailscale network
-      _log('info', 'Step 5: Scanning Tailscale network');
-      _updateProgress(0, 0, 'Scanning Tailscale...');
-      final tailscaleGateways = await _scanTailscale();
-      for (final gateway in tailscaleGateways) {
-        if (!found.any((g) => g.url == gateway.url)) {
-          found.add(gateway);
-          _log('success', 'Gateway found via Tailscale', details: gateway.url);
+      if (found.isEmpty) {
+        _log('info', 'Step 5: Scanning Tailscale network');
+        _updateProgress(0, 0, 'Scanning Tailscale...');
+        final tailscaleGateways = await _scanTailscale();
+        for (final gateway in tailscaleGateways) {
+          if (!found.any((g) => g.url == gateway.url)) {
+            found.add(gateway);
+            _log('success', 'Gateway found via Tailscale',
+                details: gateway.url);
+          }
         }
+      } else {
+        _log('info', 'Step 5: Skipping Tailscale scan',
+            details: 'Healthy gateway already discovered locally');
       }
 
       _discovered = found;

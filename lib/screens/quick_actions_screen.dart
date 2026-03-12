@@ -5,6 +5,7 @@ import '../models/gateway_status.dart';
 import '../services/backup_service.dart';
 import '../services/gateway_service.dart';
 import '../services/local_metrics_service.dart';
+import '../services/openclaw_backup_service.dart';
 import 'agent_library_screen.dart';
 import 'agent_monitor_screen.dart';
 import 'autowork_screen.dart';
@@ -37,6 +38,7 @@ class QuickActionsScreen extends StatefulWidget {
 class _QuickActionsScreenState extends State<QuickActionsScreen> {
   final Map<String, bool> _loadingActions = {};
   final BackupService _backupService = BackupService();
+  final OpenClawBackupService _openClawBackupService = OpenClawBackupService();
   final LocalMetricsService _localMetricsService = LocalMetricsService();
 
   GatewayService? _service;
@@ -457,10 +459,22 @@ class _QuickActionsScreenState extends State<QuickActionsScreen> {
   }
 
   Future<void> _createBackup() async {
+    final nativeAvailability =
+        await _openClawBackupService.getAvailability(forceRefresh: true);
+
+    if (nativeAvailability.isAvailable) {
+      final result = await _openClawBackupService.createBackup();
+      _showResult(
+        result.message,
+        isError: !result.success,
+      );
+      return;
+    }
+
     final success = await _backupService.backup();
     _showResult(
       success
-          ? 'Backup created successfully'
+          ? 'DuckBot app backup created. Native OpenClaw backup is unavailable on this device.'
           : 'Backup failed: ${_backupService.lastError}',
       isError: !success,
     );

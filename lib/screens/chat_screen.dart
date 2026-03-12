@@ -16,6 +16,7 @@ import '../widgets/inline_card_widget.dart';
 import 'agent_library_screen.dart';
 import 'agent_selector_screen.dart';
 import 'agent_detail_screen.dart';
+import 'connect_gateway_screen.dart';
 import 'multi_agent_screen.dart';
 import 'prompt_templates_screen.dart';
 
@@ -519,6 +520,51 @@ class _ChatScreenState extends State<ChatScreen> {
     return '$hour:$minute';
   }
 
+  Future<void> _openConnectGateway() async {
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ConnectGatewayScreen(
+          onConnected: () {
+            unawaited(_initializeChatService(forceRebind: true));
+          },
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    await _initializeChatService(forceRebind: true);
+  }
+
+  bool get _isMissingGatewayConfig =>
+      _connectionError == 'No gateway configured';
+
+  String get _connectionBannerTitle {
+    if (_isMissingGatewayConfig) {
+      return 'No gateway configured';
+    }
+    if (_connectionError.contains('No active main agent session found')) {
+      return 'No active chat session';
+    }
+    if (_connectionError.isNotEmpty) {
+      return 'Chat offline';
+    }
+    return 'Connecting';
+  }
+
+  String get _connectionBannerBody {
+    if (_isMissingGatewayConfig) {
+      return 'You can still open chat, browse agents, and use templates. Connect a gateway to send messages.';
+    }
+    if (_connectionError.contains('No active main agent session found')) {
+      return 'The gateway is reachable, but it has no primary session ready for chat yet.';
+    }
+    if (_connectionError.isNotEmpty) {
+      return 'The current gateway is unavailable. Reconnect or switch gateways without leaving chat.';
+    }
+    return 'Trying to reconnect to the selected gateway.';
+  }
+
   Widget _buildConnectionStatus() {
     // Compact inline status for connected state (minimal intrusion)
     if (_isConnected && _connectionError.isEmpty) {
@@ -529,7 +575,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_connectionError.isNotEmpty) {
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: Colors.red.shade50,
           border: Border(
@@ -537,31 +583,64 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.error_outline, color: Colors.red.shade700, size: 16),
-            const SizedBox(width: 8),
+            Icon(Icons.error_outline, color: Colors.red.shade700, size: 18),
+            const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                'Connection error. Tap retry to reconnect.',
-                style: TextStyle(
-                  color: Colors.red.shade700,
-                  fontSize: 12,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _connectionBannerTitle,
+                    style: TextStyle(
+                      color: Colors.red.shade700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _connectionBannerBody,
+                    style: TextStyle(
+                      color: Colors.red.shade700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: _openConnectGateway,
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.red.shade700,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('Connect',
+                            style: TextStyle(fontSize: 12)),
+                      ),
+                      if (!_isMissingGatewayConfig)
+                        TextButton(
+                          onPressed: _connectToGateway,
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red.shade700,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('Retry',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                    ],
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: _connectToGateway,
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red.shade700,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text('Retry', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -685,6 +764,12 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
+          if (!_isConnected)
+            IconButton(
+              icon: const Icon(Icons.link),
+              onPressed: _openConnectGateway,
+              tooltip: 'Connect gateway',
+            ),
           IconButton(
             icon: const Icon(Icons.download),
             onPressed: _showExportSheet,

@@ -21,6 +21,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
+import 'gateway_device_identity_service.dart';
 
 /// Connection states for WebSocket
 enum WebSocketState {
@@ -90,10 +91,19 @@ class GatewayWebSocketClient {
   static GatewayWebSocketClient? _instance;
   static const Uuid _uuid = Uuid();
   static const int _protocolVersion = 3;
+  static const String _clientId = 'openclaw-android';
+  static const String _clientMode = 'ui';
+  static const String _deviceRole = 'operator';
+  static const List<String> _operatorScopes = <String>[
+    'operator.admin',
+    'operator.approvals',
+    'operator.pairing',
+  ];
 
   WebSocketChannel? _channel;
   String? _wsUrl;
   String? _token;
+  String? _connectNonce;
 
   StreamSubscription? _subscription;
   final StreamController<GatewayMessage> _messageController =
@@ -212,6 +222,7 @@ class GatewayWebSocketClient {
       _manualDisconnect = false;
       _cancelReconnect();
       _isReconnecting = false;
+      _connectNonce = null;
 
       _handshakeCompleter = Completer<void>();
       _startListening();
@@ -248,6 +259,7 @@ class GatewayWebSocketClient {
     _cancelReconnect();
     _isReconnecting = false;
     _reconnectAttempts = 0;
+    _connectNonce = null;
     _failPendingRequests(Exception('Gateway WebSocket disconnected'));
 
     await _subscription?.cancel();
@@ -348,6 +360,9 @@ class GatewayWebSocketClient {
       final json = jsonDecode(data as String) as Map<String, dynamic>;
 
       if (json['type'] == 'event' && json['event'] == 'connect.challenge') {
+        final payload = _normalizePayload(json['payload']);
+        final nonce = payload['nonce']?.toString().trim();
+        _connectNonce = nonce == null || nonce.isEmpty ? null : nonce;
         unawaited(_sendConnectHandshake());
         return;
       }
@@ -357,6 +372,8 @@ class GatewayWebSocketClient {
         if (id == _pendingConnectId) {
           final ok = json['ok'] == true;
           if (ok) {
+            final payload = _normalizePayload(json['payload']);
+            unawaited(_persistDeviceAuthToken(payload));
             _pendingConnectId = null;
             if (_handshakeCompleter != null &&
                 !_handshakeCompleter!.isCompleted) {
@@ -600,21 +617,70 @@ class GatewayWebSocketClient {
       return;
     }
 
+    final connectNonce = _connectNonce?.trim() ?? '';
+    if (connectNonce.isEmpty) {
+      final exception = Exception('Gateway connect challenge missing nonce');
+      if (_handshakeCompleter != null && !_handshakeCompleter!.isCompleted) {
+        _handshakeCompleter!.completeError(exception);
+      }
+      return;
+    }
+
     _pendingConnectId = _uuid.v4();
+    final identityService = GatewayDeviceIdentityService.instance;
+    final identity = await identityService.loadOrCreateIdentity();
+    final storedDeviceToken = await identityService.loadDeviceToken(
+      deviceId: identity.deviceId,
+      role: _deviceRole,
+    );
+    final authToken = _token?.trim().isNotEmpty == true
+        ? _token!.trim()
+        : storedDeviceToken?.token;
+    final signedAtMs = DateTime.now().millisecondsSinceEpoch;
+    final payload = identityService.buildAuthPayloadV3(
+      deviceId: identity.deviceId,
+      clientId: _clientId,
+      clientMode: _clientMode,
+      role: _deviceRole,
+      scopes: _operatorScopes,
+      signedAtMs: signedAtMs,
+      nonce: connectNonce,
+      token: authToken,
+      platform: _platformName(),
+      deviceFamily: 'phone',
+    );
+    final signature = await identityService.signPayload(identity, payload);
+    final auth = <String, dynamic>{};
+    if (authToken != null && authToken.isNotEmpty) {
+      auth['token'] = authToken;
+    }
+    if (storedDeviceToken != null) {
+      auth['deviceToken'] = storedDeviceToken.token;
+    }
+
     final connectParams = {
       'minProtocol': _protocolVersion,
       'maxProtocol': _protocolVersion,
       'client': {
-        'id': 'openclaw-android',
+        'id': _clientId,
         'displayName': 'DuckBot Go',
         'version': '3.0.7',
         'platform': _platformName(),
         'deviceFamily': 'phone',
-        'mode': 'ui',
+        'mode': _clientMode,
         'instanceId': 'duckbot-go-mobile',
       },
       'caps': <String>[],
-      if (_token != null && _token!.isNotEmpty) 'auth': {'token': _token},
+      'role': _deviceRole,
+      'scopes': _operatorScopes,
+      'device': {
+        'id': identity.deviceId,
+        'publicKey': identity.publicKey,
+        'signature': signature,
+        'signedAt': signedAtMs,
+        'nonce': connectNonce,
+      },
+      if (auth.isNotEmpty) 'auth': auth,
     };
 
     try {
@@ -649,6 +715,26 @@ class GatewayWebSocketClient {
       case TargetPlatform.fuchsia:
         return 'fuchsia';
     }
+  }
+
+  Future<void> _persistDeviceAuthToken(Map<String, dynamic> payload) async {
+    final auth = _normalizePayload(payload['auth']);
+    final token = auth['deviceToken']?.toString().trim() ?? '';
+    if (token.isEmpty) {
+      return;
+    }
+
+    final identity =
+        await GatewayDeviceIdentityService.instance.loadOrCreateIdentity();
+    await GatewayDeviceIdentityService.instance.storeDeviceToken(
+      deviceId: identity.deviceId,
+      role: auth['role']?.toString() ?? _deviceRole,
+      token: token,
+      scopes: (auth['scopes'] as List<dynamic>? ?? const <dynamic>[])
+          .map((scope) => scope.toString())
+          .where((scope) => scope.isNotEmpty)
+          .toList(),
+    );
   }
 
   void _failPendingRequests(Object error) {

@@ -5,6 +5,21 @@ All notable changes to DuckBot Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.9+309] - 2026-03-11
+
+### Added
+- Latest desktop/Codex backup/device-identity pass merged from `DuckBot-Go-Project`
+- New `gateway_device_identity_service.dart`
+- New `openclaw_backup_service.dart`
+
+### Changed
+- `backup_restore_screen.dart`, `chat_screen.dart`, `quick_actions_screen.dart`, `discovery_service.dart`, `gateway_websocket_client.dart`, and app wiring updated from the newest desktop project state
+- README, status, changelog, and in-app version strings aligned to v3.0.9
+
+### Validation
+- `flutter test` ✅
+- `flutter build apk --release` ✅
+
 ## [3.0.8+308] - 2026-03-11
 
 ### Added

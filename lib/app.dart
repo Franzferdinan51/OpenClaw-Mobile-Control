@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,11 +31,13 @@ class DuckBotGoApp extends StatefulWidget {
 
 class _DuckBotGoAppState extends State<DuckBotGoApp> {
   final DiscoveryService _discoveryService = DiscoveryService();
+  static const Duration _startupProbeTimeout = Duration(seconds: 2);
+  static const Duration _backgroundDiscoveryTimeout = Duration(seconds: 18);
   GatewayService? _gatewayService;
   bool _isLoading = true;
-  bool _autoConnectFailed = false;
-  bool _isFirstLaunch = false;
+  bool _showGuidedSetup = false;
   String? _initialError;
+  Timer? _backgroundDiscoveryTimer;
 
   // Global navigator key for route handling
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
@@ -53,7 +56,6 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     final prefs = await SharedPreferences.getInstance();
 
     // Check if first launch
-    _isFirstLaunch = !(prefs.getBool('has_completed_setup') ?? false);
     final hasShownSuccessDialog =
         prefs.getBool('has_shown_connection_success') ?? false;
 
@@ -69,6 +71,7 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
           gatewayName: gatewayName,
           token: token,
           showSuccessDialog: !hasShownSuccessDialog,
+          timeout: _startupProbeTimeout,
         )) {
       return;
     }
@@ -107,34 +110,17 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
         gatewayName: candidate['name'],
         token: candidate['token'] ?? token,
         showSuccessDialog: !hasShownSuccessDialog,
+        timeout: _startupProbeTimeout,
       )) {
         return;
       }
     }
 
-    // Last gateway failed, try discovery
-    final discovered = await _discoveryService.scan();
-
-    for (final gateway in discovered) {
-      if (await _tryStartupGateway(
-        prefs,
-        gatewayUrl: gateway.url,
-        gatewayName: gateway.name,
-        token: gateway.token ?? token,
-        showSuccessDialog: !hasShownSuccessDialog,
-      )) {
-        return;
-      }
-    }
-
-    // Could not auto-connect - show guided setup on first launch
-    setState(() {
-      _isLoading = false;
-      _autoConnectFailed = true;
-      _initialError = gatewayUrl != null
-          ? 'Could not connect to last gateway and no auto-discovered gateways found'
-          : 'No gateway configured';
-    });
+    _enterOfflineMode(gatewayUrl);
+    unawaited(_continueDiscoveryInBackground(
+      prefs,
+      token: token,
+    ));
   }
 
   Future<bool> _tryStartupGateway(
@@ -143,9 +129,10 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     String? gatewayName,
     String? token,
     required bool showSuccessDialog,
+    Duration timeout = _startupProbeTimeout,
   }) async {
     final service = GatewayService(baseUrl: gatewayUrl, token: token);
-    final status = await service.getStatus(timeout: const Duration(seconds: 3));
+    final status = await service.getStatus(timeout: timeout);
     if (status == null || !status.online) {
       return false;
     }
@@ -172,8 +159,7 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
 
     setState(() {
       _isLoading = false;
-      _isFirstLaunch = false;
-      _autoConnectFailed = false;
+      _showGuidedSetup = false;
       _initialError = null;
     });
 
@@ -189,6 +175,63 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
     return true;
   }
 
+  void _enterOfflineMode(String? gatewayUrl) {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+      _gatewayService = null;
+      // Keep the main shell reachable even when setup is incomplete or the
+      // last gateway is down. Chat, Settings, and local install/repair flows
+      // should stay available in offline mode.
+      _showGuidedSetup = false;
+      _initialError = gatewayUrl != null
+          ? 'Could not connect to the saved gateway. Open Settings or Connect to reconfigure.'
+          : 'No gateway configured. Open Settings, Connect, or the local installer.';
+    });
+  }
+
+  Future<void> _continueDiscoveryInBackground(
+    SharedPreferences prefs, {
+    required String? token,
+  }) async {
+    if (_gatewayService != null) return;
+
+    var timedOut = false;
+    _backgroundDiscoveryTimer?.cancel();
+    final deadlineTimer = Timer(_backgroundDiscoveryTimeout, () {
+      timedOut = true;
+    });
+    _backgroundDiscoveryTimer = deadlineTimer;
+
+    final discovered = await _discoveryService.scan(stopAtFirstHealthy: true);
+
+    if (identical(_backgroundDiscoveryTimer, deadlineTimer)) {
+      deadlineTimer.cancel();
+      _backgroundDiscoveryTimer = null;
+    }
+
+    if (timedOut) {
+      return;
+    }
+
+    for (final gateway in discovered) {
+      if (_gatewayService != null) return;
+
+      final connected = await _tryStartupGateway(
+        prefs,
+        gatewayUrl: gateway.url,
+        gatewayName: gateway.name,
+        token: gateway.token ?? token,
+        showSuccessDialog: false,
+        timeout: _startupProbeTimeout,
+      );
+      if (connected) {
+        return;
+      }
+    }
+  }
+
   void _onGatewayChanged() {
     // Reload gateway service with new settings
     _loadGatewayService();
@@ -196,17 +239,19 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
 
   Future<void> _loadGatewayService() async {
     final prefs = await SharedPreferences.getInstance();
-    final gatewayUrl =
-        prefs.getString('gateway_url') ?? 'http://localhost:18789';
+    final gatewayUrl = prefs.getString('gateway_url');
     final token = prefs.getString('gateway_token');
 
     setState(() {
-      _gatewayService = GatewayService(baseUrl: gatewayUrl, token: token);
+      _gatewayService = gatewayUrl == null || gatewayUrl.isEmpty
+          ? null
+          : GatewayService(baseUrl: gatewayUrl, token: token);
     });
   }
 
   @override
   void dispose() {
+    _backgroundDiscoveryTimer?.cancel();
     _discoveryService.dispose();
     super.dispose();
   }
@@ -227,13 +272,12 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
           routes: {
             '/main': (context) => _isLoading
                 ? const _LoadingScreen()
-                : _isFirstLaunch || _autoConnectFailed
+                : _showGuidedSetup
                     ? _GuidedSetupScreen(
                         error: _initialError,
                         onComplete: () {
                           setState(() {
-                            _isFirstLaunch = false;
-                            _autoConnectFailed = false;
+                            _showGuidedSetup = false;
                             _loadGatewayService();
                           });
                         },
@@ -242,17 +286,17 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
                         gatewayService: _gatewayService,
                         onGatewayChanged: _onGatewayChanged,
                         initialTab: _getInitialTab(context),
+                        startupNotice: _initialError,
                       ),
           },
           home: _isLoading
               ? const _LoadingScreen()
-              : _isFirstLaunch || _autoConnectFailed
+              : _showGuidedSetup
                   ? _GuidedSetupScreen(
                       error: _initialError,
                       onComplete: () {
                         setState(() {
-                          _isFirstLaunch = false;
-                          _autoConnectFailed = false;
+                          _showGuidedSetup = false;
                           _loadGatewayService();
                         });
                       },
@@ -260,6 +304,7 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
                   : MainNavigationScreen(
                       gatewayService: _gatewayService,
                       onGatewayChanged: _onGatewayChanged,
+                      startupNotice: _initialError,
                     ),
         );
       },
@@ -311,71 +356,6 @@ class _LoadingScreen extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorScreen extends StatelessWidget {
-  final String? error;
-  final VoidCallback onRetry;
-
-  const _ErrorScreen({this.error, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.wifi_off,
-                size: 80,
-                color: Colors.orange,
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Could Not Connect',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                error ?? 'No gateway found',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Please configure your gateway in Settings',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try Again'),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (context) => MainNavigationScreen(
-                        onGatewayChanged: () {},
-                      ),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.settings),
-                label: const Text('Go to Settings'),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -863,12 +843,14 @@ class MainNavigationScreen extends StatefulWidget {
   final GatewayService? gatewayService;
   final VoidCallback onGatewayChanged;
   final int? initialTab;
+  final String? startupNotice;
 
   const MainNavigationScreen({
     super.key,
     this.gatewayService,
     required this.onGatewayChanged,
     this.initialTab,
+    this.startupNotice,
   });
 
   @override
@@ -879,6 +861,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   late int _currentIndex;
   late GatewayService? _gatewayService;
   final AppSettingsService _appSettings = AppSettingsService();
+  bool _didShowStartupNotice = false;
 
   @override
   void initState() {
@@ -886,6 +869,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _gatewayService = widget.gatewayService;
     _currentIndex = widget.initialTab ?? 0;
     _appSettings.addListener(_onSettingsChanged);
+    _scheduleStartupNotice();
   }
 
   @override
@@ -898,6 +882,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
     if (gatewayChanged) {
       _gatewayService = widget.gatewayService;
+    }
+
+    if (oldWidget.startupNotice != widget.startupNotice) {
+      _didShowStartupNotice = false;
+      _scheduleStartupNotice();
     }
   }
 
@@ -923,6 +912,47 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     setState(() {
       _currentIndex = index;
     });
+  }
+
+  void _scheduleStartupNotice() {
+    final notice = widget.startupNotice;
+    if (_didShowStartupNotice || notice == null || notice.trim().isEmpty) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _didShowStartupNotice) return;
+      _didShowStartupNotice = true;
+
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(notice),
+          duration: const Duration(seconds: 8),
+          action: SnackBarAction(
+            label: 'Settings',
+            onPressed: _openSettingsTab,
+          ),
+        ),
+      );
+    });
+  }
+
+  void _openSettingsTab() {
+    setState(() {
+      _currentIndex = _settingsTabIndexForMode(_appSettings.currentMode);
+    });
+  }
+
+  int _settingsTabIndexForMode(AppMode mode) {
+    switch (mode) {
+      case AppMode.basic:
+        return 3;
+      case AppMode.powerUser:
+        return 4;
+      case AppMode.developer:
+        return 5;
+    }
   }
 
   @override
