@@ -7,7 +7,7 @@ class ChatMessage {
   final String content;
   final DateTime? timestamp;
   final Map<String, dynamic>? metadata;
-  
+
   /// Inline widget data for generative UI
   /// When present, this widget should be rendered inline in the chat
   final InlineWidgetData? widget;
@@ -27,34 +27,30 @@ class ChatMessage {
     if (json['widget'] != null) {
       widget = parseInlineWidget(json['widget'] as Map<String, dynamic>);
     }
-    
+
     return ChatMessage(
-      id: json['id'] ?? json['messageId'] ?? '',
+      id: (json['id'] ?? json['messageId'] ?? '').toString(),
       role: json['role'] ?? 'user',
-      content: json['content'] ?? json['text'] ?? '',
-      timestamp: json['timestamp'] != null
-          ? DateTime.tryParse(json['timestamp'].toString())
-          : json['time'] != null
-              ? DateTime.tryParse(json['time'].toString())
-              : null,
+      content: _parseContent(json),
+      timestamp: _parseTimestamp(json['timestamp'] ?? json['time']),
       metadata: json['metadata'],
       widget: widget,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'role': role,
-    'content': content,
-    'timestamp': timestamp?.toIso8601String(),
-    'metadata': metadata,
-    if (widget != null) 'widget': widget!.toJson(),
-  };
+        'id': id,
+        'role': role,
+        'content': content,
+        'timestamp': timestamp?.toIso8601String(),
+        'metadata': metadata,
+        if (widget != null) 'widget': widget!.toJson(),
+      };
 
   bool get isUser => role == 'user' || role == 'human';
   bool get isAssistant => role == 'assistant' || role == 'agent';
   bool get isSystem => role == 'system';
-  
+
   /// Whether this message has an inline widget
   bool get hasWidget => widget != null;
 
@@ -96,10 +92,58 @@ class BossIdentity {
   }
 
   Map<String, dynamic> toJson() => {
-    'name': name,
-    'emoji': emoji,
-    'avatarUrl': avatarUrl,
-  };
+        'name': name,
+        'emoji': emoji,
+        'avatarUrl': avatarUrl,
+      };
 
   String get displayName => '$emoji $name';
+}
+
+String _parseContent(Map<String, dynamic> json) {
+  final content = json['content'];
+  if (content is String) {
+    return content;
+  }
+  if (content is List) {
+    final parts = <String>[];
+    for (final item in content) {
+      if (item is String && item.trim().isNotEmpty) {
+        parts.add(item.trim());
+        continue;
+      }
+      if (item is Map) {
+        final text = item['text'];
+        if (text is String && text.trim().isNotEmpty) {
+          parts.add(text.trim());
+          continue;
+        }
+        final nestedContent = item['content'];
+        if (nestedContent is String && nestedContent.trim().isNotEmpty) {
+          parts.add(nestedContent.trim());
+        }
+      }
+    }
+    if (parts.isNotEmpty) {
+      return parts.join('\n');
+    }
+  }
+  return (json['text'] ?? '').toString();
+}
+
+DateTime? _parseTimestamp(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is String) {
+    return DateTime.tryParse(raw);
+  }
+  if (raw is int) {
+    return DateTime.fromMillisecondsSinceEpoch(
+      raw > 1000000000000 ? raw : raw * 1000,
+    );
+  }
+  if (raw is double) {
+    final millis = raw > 1000000000000 ? raw.toInt() : (raw * 1000).toInt();
+    return DateTime.fromMillisecondsSinceEpoch(millis);
+  }
+  return DateTime.tryParse(raw.toString());
 }

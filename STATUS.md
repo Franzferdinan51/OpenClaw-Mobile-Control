@@ -8,16 +8,16 @@
 
 ## ✅ Current State
 
-**Status:** ✅ RELEASED - v3.0.7 merged desktop/Codex pass
+**Status:** ✅ RELEASED - v3.0.8 merged desktop/Codex pass
 
-### Verified in v3.0.7 pass
+### Verified in v3.0.8 pass
 - ✅ Chat lifecycle fixes preserve the shared chat connection across navigation
 - ✅ Search / Quick Actions / Dashboard no longer spawn replacement chat screens
 - ✅ Reconnect spam reduced with stronger backoff and guards
 - ✅ Dashboard upgraded with agent visualization and improved gateway status cards
 - ✅ Local metrics service added for local-install status sourcing
 - ✅ Termux detection and prerequisite checking retained from v3.0.2
-- ✅ Version bumped to `3.0.7+307`
+- ✅ Version bumped to `3.0.8+308`
 - ✅ README / changelog / in-app version strings aligned
 
 ---
@@ -86,10 +86,10 @@ flutter build apk --release           # ✅ Success (100.7MB)
 ## 📦 Release Info
 
 ### Current release
-- **Version:** `3.0.7+307`
+- **Version:** `3.0.8+308`
 - **Type:** Merged desktop/Codex update release
 - **APK:** `build/app/outputs/flutter-apk/app-release.apk`
-- **Tag:** `v3.0.7`
+- **Tag:** `v3.0.8`
 
 ### Key Features
 - ✅ Preserved chat lifecycle across navigation-heavy flows

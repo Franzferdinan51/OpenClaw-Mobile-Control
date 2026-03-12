@@ -10,6 +10,7 @@ import '../utils/android_package_detector.dart';
 import 'agent_library_screen.dart';
 import 'connect_gateway_screen.dart';
 import 'node_settings_screen.dart';
+import 'termux_hub_screen.dart';
 
 /// Local OpenClaw Installer Screen
 ///
@@ -172,7 +173,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     _log('info', _termuxBridge.noRootInstallScript.trim());
 
     try {
-      final success = await _termuxBridge.runCommand(
+      final result = await _termuxBridge.runCommandDetailed(
         script: _termuxBridge.noRootInstallScript,
         label: 'DuckBot No-Root Setup',
         description:
@@ -182,27 +183,39 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
 
       if (!mounted) return;
 
-      if (success) {
+      if (result.requiresAllowExternalApps) {
+        setState(() {
+          _state = InstallationState.error;
+          _errorMessage =
+              'Termux rejected the command because allow-external-apps is disabled.';
+        });
+        _log('error',
+            'Termux rejected RUN_COMMAND: allow-external-apps must be enabled in ~/.termux/termux.properties');
+        _showAllowExternalAppsDialog();
+      } else if (result.accepted) {
         setState(() {
           _setupSentToTermux = true;
           _state = InstallationState.idle;
           _progress = 1.0;
-          _statusMessage =
-              'Setup sent to Termux. Finish there, then return and test connection.';
+          _statusMessage = result.pending
+              ? 'Setup sent to Termux. Finish there, then return and test connection.'
+              : 'Setup command finished. Review Termux output, then test connection.';
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Setup sent to Termux. Complete it there and return here.'),
+          SnackBar(
+            content: Text(result.pending
+                ? 'Setup sent to Termux. Complete it there and return here.'
+                : 'Setup command completed. Review Termux, then continue here.'),
             backgroundColor: Colors.green,
-            duration: Duration(seconds: 4),
+            duration: const Duration(seconds: 4),
           ),
         );
       } else {
         setState(() {
           _state = InstallationState.error;
-          _errorMessage = 'Termux did not accept the setup command.';
+          _errorMessage = _describeTermuxResult(result,
+              fallback: 'Termux did not accept the setup command.');
         });
       }
     } catch (e) {
@@ -222,7 +235,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     });
 
     try {
-      final success = await _termuxBridge.runCommand(
+      final result = await _termuxBridge.runCommandDetailed(
         script: _termuxBridge.startGatewayScript,
         label: 'Start OpenClaw Gateway',
         description: 'Start the local OpenClaw gateway on port 18789',
@@ -233,18 +246,27 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
 
       setState(() {
         _gatewayRunning = false;
-        _setupSentToTermux = success || _setupSentToTermux;
-        _state =
-            success ? InstallationState.completed : InstallationState.error;
-        _progress = success ? 1.0 : 0.0;
-        _statusMessage = success
+        _setupSentToTermux = result.accepted || _setupSentToTermux;
+        _state = result.accepted
+            ? InstallationState.completed
+            : InstallationState.error;
+        _progress = result.accepted ? 1.0 : 0.0;
+        _statusMessage = result.accepted
             ? 'Gateway start sent to Termux. Verify reachability after it starts.'
             : 'Gateway start failed.';
-        _errorMessage =
-            success ? null : 'Failed to send gateway start to Termux.';
+        _errorMessage = result.accepted
+            ? null
+            : _describeTermuxResult(
+                result,
+                fallback: 'Failed to send gateway start to Termux.',
+              );
       });
 
-      if (success) {
+      if (result.requiresAllowExternalApps) {
+        _showAllowExternalAppsDialog();
+      }
+
+      if (result.accepted) {
         _log('info', 'Gateway start command sent to Termux');
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -396,6 +418,72 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     );
   }
 
+  Future<void> _copyAllowExternalAppsFix() async {
+    await Clipboard.setData(
+      ClipboardData(text: _termuxBridge.allowExternalAppsSetupScript.trim()),
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('allow-external-apps fix copied'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  String _describeTermuxResult(
+    TermuxCommandResult result, {
+    required String fallback,
+  }) {
+    if (result.requiresAllowExternalApps) {
+      return 'Termux needs ${TermuxRunCommandService.allowExternalAppsSnippet} in ~/.termux/termux.properties, then ${TermuxRunCommandService.allowExternalAppsReloadCommand}.';
+    }
+    if ((result.errorMessage ?? '').trim().isNotEmpty) {
+      return result.errorMessage!.trim();
+    }
+    if (result.exitCode != null) {
+      return 'Termux command exited with code ${result.exitCode}. Review the Termux session for details.';
+    }
+    return fallback;
+  }
+
+  void _showAllowExternalAppsDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enable Termux External Commands'),
+        content: const Text(
+          'Termux is installed and permission is granted, but Termux still blocks external apps until you enable allow-external-apps in ~/.termux/termux.properties. '
+          'Open Termux, add "allow-external-apps=true", run "termux-reload-settings", then retry here.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _launchExternalUrl(TermuxRunCommandService.runCommandHelpUrl);
+            },
+            child: const Text('Open Docs'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _copyAllowExternalAppsFix();
+            },
+            child: const Text('Copy Fix'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _launchTermuxApp();
+            },
+            child: const Text('Open Termux'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showTroubleshooting() {
     showDialog(
       context: context,
@@ -421,6 +509,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   'Use the official Termux app from F-Droid or GitHub Releases, not Google Play',
                   'Install the Termux:API app from the same source as Termux',
                   'Grant this app the Termux RUN_COMMAND permission in Android settings',
+                  'In Termux, enable allow-external-apps=true in ~/.termux/termux.properties and run termux-reload-settings',
                 ],
               ),
               const SizedBox(height: 16),
@@ -450,11 +539,13 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   'If in-app launch fails, use the official no-root flow manually:',
                   '1. Install Termux and Termux:API from the same source (F-Droid or GitHub Releases)',
                   '2. Open Termux once',
-                  '3. Run: pkg update -y && pkg upgrade -y',
-                  '4. Run: pkg install -y nodejs termux-api',
-                  '5. Run: termux-setup-storage',
-                  '6. Run: npm install -g openclaw --unsafe-perm',
-                  '7. Run: openclaw gateway start --port 18789',
+                  '3. Add allow-external-apps=true to ~/.termux/termux.properties',
+                  '4. Run: termux-reload-settings',
+                  '5. Run: pkg update -y && pkg upgrade -y',
+                  '6. Run: pkg install -y nodejs termux-api',
+                  '7. Run: termux-setup-storage',
+                  '8. Run: npm install -g openclaw --unsafe-perm',
+                  '9. Run: openclaw gateway start --port 18789',
                 ],
               ),
             ],
@@ -1376,6 +1467,22 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             icon: const Icon(Icons.copy_all),
             label: const Text('Copy Gateway Command'),
           ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TermuxHubScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.explore),
+            label: const Text('Browse Safe Tool Catalog'),
+          ),
         ],
       );
     }
@@ -1459,6 +1566,22 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               Navigator.push(
                 context,
                 MaterialPageRoute(
+                  builder: (context) => const TermuxHubScreen(),
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+            icon: const Icon(Icons.explore),
+            label: const Text('Browse Safe Tool Catalog'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
                   builder: (context) => const ConnectGatewayScreen(),
                 ),
               );
@@ -1511,6 +1634,22 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
           ),
           icon: const Icon(Icons.terminal),
           label: const Text('Open Termux'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const TermuxHubScreen(),
+              ),
+            );
+          },
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 48),
+          ),
+          icon: const Icon(Icons.explore),
+          label: const Text('Browse Safe Tool Catalog'),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(

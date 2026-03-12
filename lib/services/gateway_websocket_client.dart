@@ -1,5 +1,5 @@
 /// Gateway WebSocket Client
-/// 
+///
 /// Real-time bidirectional communication with OpenClaw Gateway.
 /// Connects to ws://GATEWAY_IP:18789/ws for live chat and events.
 ///
@@ -18,6 +18,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 
@@ -56,26 +57,44 @@ class GatewayMessage {
   }
 
   Map<String, dynamic> toJson() => {
-    'type': type,
-    'data': data,
-    'timestamp': timestamp.toIso8601String(),
-    if (id != null) 'id': id,
-  };
+        'type': type,
+        'data': data,
+        'timestamp': timestamp.toIso8601String(),
+        if (id != null) 'id': id,
+      };
 
   bool get isChatResponse => type == 'chat.response' || type == 'chat';
   bool get isError => type == 'error';
   String? get content => data['content'] as String?;
-  String? get errorMessage => data['message'] as String? ?? data['error'] as String?;
+  String? get errorMessage =>
+      data['message'] as String? ?? data['error'] as String?;
+}
+
+class GatewayRequestException implements Exception {
+  final String code;
+  final String message;
+  final Object? details;
+
+  GatewayRequestException({
+    required this.code,
+    required this.message,
+    this.details,
+  });
+
+  @override
+  String toString() => 'GatewayRequestException($code): $message';
 }
 
 /// Gateway WebSocket Client
 class GatewayWebSocketClient {
   static GatewayWebSocketClient? _instance;
+  static const Uuid _uuid = Uuid();
+  static const int _protocolVersion = 3;
 
   WebSocketChannel? _channel;
   String? _wsUrl;
   String? _token;
-  
+
   StreamSubscription? _subscription;
   final StreamController<GatewayMessage> _messageController =
       StreamController<GatewayMessage>.broadcast();
@@ -85,7 +104,7 @@ class GatewayWebSocketClient {
   // Connection state
   WebSocketState _state = WebSocketState.disconnected;
   WebSocketState get state => _state;
-  
+
   // Reconnection with exponential backoff
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
@@ -100,6 +119,9 @@ class GatewayWebSocketClient {
   // Message queue (for offline queuing)
   final List<Map<String, dynamic>> _messageQueue = [];
   static const int _maxQueueSize = 50;
+  final Map<String, Completer<Map<String, dynamic>>> _pendingRequests = {};
+  Completer<void>? _handshakeCompleter;
+  String? _pendingConnectId;
 
   factory GatewayWebSocketClient() {
     _instance ??= GatewayWebSocketClient._internal();
@@ -107,15 +129,16 @@ class GatewayWebSocketClient {
   }
 
   GatewayWebSocketClient._internal();
+  GatewayWebSocketClient.isolated();
 
   // ==================== Streams ====================
 
   /// Stream of incoming messages
   Stream<GatewayMessage> get messageStream => _messageController.stream;
-  
+
   /// Stream of connection state changes
   Stream<WebSocketState> get stateStream => _stateController.stream;
-  
+
   /// Whether currently connected
   bool get isConnected => _state == WebSocketState.connected;
 
@@ -127,17 +150,17 @@ class GatewayWebSocketClient {
     var wsUrl = baseUrl
         .replaceFirst('https://', 'wss://')
         .replaceFirst('http://', 'ws://');
-    
+
     // Append /ws path if not present
     if (!wsUrl.endsWith('/ws')) {
       // Remove trailing slash before adding /ws
       wsUrl = wsUrl.replaceAll(RegExp(r'/$'), '');
       wsUrl = '$wsUrl/ws';
     }
-    
+
     _wsUrl = wsUrl;
     _token = token;
-    
+
     debugPrint('🔗 WebSocket configured: $_wsUrl');
   }
 
@@ -160,7 +183,7 @@ class GatewayWebSocketClient {
       throw Exception('WebSocket URL not configured');
     }
 
-    if (_state == WebSocketState.connecting || 
+    if (_state == WebSocketState.connecting ||
         _state == WebSocketState.connected) {
       debugPrint('⚠️ Already connecting or connected');
       return;
@@ -174,7 +197,8 @@ class GatewayWebSocketClient {
       var connectUrl = _wsUrl!;
       if (_token != null && _token!.isNotEmpty) {
         final separator = connectUrl.contains('?') ? '&' : '?';
-        connectUrl = '$connectUrl${separator}token=${Uri.encodeComponent(_token!)}';
+        connectUrl =
+            '$connectUrl${separator}token=${Uri.encodeComponent(_token!)}';
       }
 
       // Connect
@@ -188,22 +212,28 @@ class GatewayWebSocketClient {
       _manualDisconnect = false;
       _cancelReconnect();
       _isReconnecting = false;
+
+      _handshakeCompleter = Completer<void>();
+      _startListening();
+      await _performHandshake();
+
       _updateState(WebSocketState.connected);
       _reconnectAttempts = 0;
-      
-      // Start listening
-      _startListening();
 
       // Keep the gateway connection warm on mobile networks / idle timeouts
       _startHeartbeat();
-      
+
       // Flush queued messages
       _flushQueue();
-      
+
       debugPrint('✅ WebSocket connected');
     } catch (e) {
       debugPrint('❌ WebSocket connection failed: $e');
       _updateState(WebSocketState.error);
+      _pendingConnectId = null;
+      if (_handshakeCompleter != null && !_handshakeCompleter!.isCompleted) {
+        _handshakeCompleter!.completeError(e);
+      }
       _handleDisconnection();
       rethrow;
     }
@@ -212,19 +242,20 @@ class GatewayWebSocketClient {
   /// Disconnect from the gateway
   Future<void> disconnect() async {
     debugPrint('🔌 Disconnecting...');
-    
+
     _manualDisconnect = true;
     _stopHeartbeat();
     _cancelReconnect();
     _isReconnecting = false;
     _reconnectAttempts = 0;
-    
+    _failPendingRequests(Exception('Gateway WebSocket disconnected'));
+
     await _subscription?.cancel();
     _subscription = null;
-    
+
     await _channel?.sink.close(ws_status.goingAway);
     _channel = null;
-    
+
     _updateState(WebSocketState.disconnected);
     debugPrint('🔌 Disconnected');
   }
@@ -241,7 +272,7 @@ class GatewayWebSocketClient {
       },
       'timestamp': DateTime.now().toIso8601String(),
     };
-    
+
     _send(message);
   }
 
@@ -263,6 +294,45 @@ class GatewayWebSocketClient {
     }
   }
 
+  /// Send an RPC request over the gateway socket.
+  Future<Map<String, dynamic>> request(
+    String method,
+    Map<String, dynamic> params, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    if (!isConnected) {
+      await connect();
+    }
+
+    if (!isConnected) {
+      throw Exception('Gateway WebSocket is not connected');
+    }
+
+    final id = _uuid.v4();
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingRequests[id] = completer;
+
+    try {
+      _channel!.sink.add(jsonEncode({
+        'type': 'req',
+        'id': id,
+        'method': method,
+        'params': params,
+      }));
+    } catch (e) {
+      _pendingRequests.remove(id);
+      rethrow;
+    }
+
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        _pendingRequests.remove(id);
+        throw TimeoutException('Gateway RPC timed out for $method');
+      },
+    );
+  }
+
   // ==================== Internal ====================
 
   void _startListening() {
@@ -276,11 +346,79 @@ class GatewayWebSocketClient {
   void _handleMessage(dynamic data) {
     try {
       final json = jsonDecode(data as String) as Map<String, dynamic>;
+
+      if (json['type'] == 'event' && json['event'] == 'connect.challenge') {
+        unawaited(_sendConnectHandshake());
+        return;
+      }
+
+      if (json['type'] == 'res' && json['id'] is String) {
+        final id = json['id'] as String;
+        if (id == _pendingConnectId) {
+          final ok = json['ok'] == true;
+          if (ok) {
+            _pendingConnectId = null;
+            if (_handshakeCompleter != null &&
+                !_handshakeCompleter!.isCompleted) {
+              _handshakeCompleter!.complete();
+            }
+          } else {
+            final error = json['error'] as Map<String, dynamic>? ?? const {};
+            final exception = GatewayRequestException(
+              code: error['code']?.toString() ?? 'UNAVAILABLE',
+              message: error['message']?.toString() ?? 'Gateway connect failed',
+              details: error['details'],
+            );
+            _pendingConnectId = null;
+            if (_handshakeCompleter != null &&
+                !_handshakeCompleter!.isCompleted) {
+              _handshakeCompleter!.completeError(exception);
+            }
+          }
+          return;
+        }
+
+        final pending = _pendingRequests.remove(id);
+        if (pending != null) {
+          final ok = json['ok'] == true;
+          if (ok) {
+            pending.complete(_normalizePayload(json['payload']));
+          } else {
+            final error = json['error'] as Map<String, dynamic>? ?? const {};
+            pending.completeError(
+              GatewayRequestException(
+                code: error['code']?.toString() ?? 'UNAVAILABLE',
+                message:
+                    error['message']?.toString() ?? 'Gateway request failed',
+                details: error['details'],
+              ),
+            );
+          }
+        }
+        return;
+      }
+
+      if (json['type'] == 'event') {
+        final message = GatewayMessage(
+          type: json['event'] as String? ?? 'event',
+          data: _normalizePayload(json['payload']),
+          timestamp: json['timestamp'] != null
+              ? DateTime.tryParse(json['timestamp'].toString()) ??
+                  DateTime.now()
+              : DateTime.now(),
+          id: json['id'] as String?,
+        );
+
+        debugPrint('📥 Received event: ${message.type}');
+        if (!_messageController.isClosed) {
+          _messageController.add(message);
+        }
+        return;
+      }
+
       final message = GatewayMessage.fromJson(json);
-      
       debugPrint('📥 Received: ${message.type}');
-      
-      // Emit to stream
+
       if (!_messageController.isClosed) {
         _messageController.add(message);
       }
@@ -305,11 +443,22 @@ class GatewayWebSocketClient {
       return;
     }
 
-    final shouldReconnect = _state == WebSocketState.connected || _state == WebSocketState.reconnecting;
+    final shouldReconnect = _state == WebSocketState.connected ||
+        _state == WebSocketState.reconnecting;
     _stopHeartbeat();
     _channel = null;
+    _failPendingRequests(
+      Exception('Gateway WebSocket disconnected'),
+    );
+    _pendingConnectId = null;
+    if (_handshakeCompleter != null && !_handshakeCompleter!.isCompleted) {
+      _handshakeCompleter!.completeError(
+        Exception('Gateway WebSocket disconnected during handshake'),
+      );
+    }
 
-    _updateState(markError ? WebSocketState.error : WebSocketState.disconnected);
+    _updateState(
+        markError ? WebSocketState.error : WebSocketState.disconnected);
     debugPrint('⚠️ Connection lost (reconnect: $shouldReconnect)');
 
     if (shouldReconnect) {
@@ -336,12 +485,14 @@ class GatewayWebSocketClient {
     _isReconnecting = true;
 
     final exponent = _reconnectAttempts.clamp(0, 4);
-    final baseDelaySeconds = (_initialReconnectDelay.inSeconds * (1 << exponent))
+    final baseDelaySeconds = (_initialReconnectDelay.inSeconds *
+            (1 << exponent))
         .clamp(_initialReconnectDelay.inSeconds, _maxReconnectDelay.inSeconds);
     final jitterMs = DateTime.now().millisecondsSinceEpoch % 750;
     final delay = Duration(seconds: baseDelaySeconds, milliseconds: jitterMs);
 
-    debugPrint('🔄 Scheduling reconnect in ${delay.inSeconds}s (attempt ${_reconnectAttempts + 1}/$_maxReconnectAttempts)');
+    debugPrint(
+        '🔄 Scheduling reconnect in ${delay.inSeconds}s (attempt ${_reconnectAttempts + 1}/$_maxReconnectAttempts)');
 
     _reconnectTimer = Timer(delay, () async {
       _reconnectTimer = null;
@@ -395,12 +546,12 @@ class GatewayWebSocketClient {
 
   void _flushQueue() {
     if (_messageQueue.isEmpty) return;
-    
+
     debugPrint('📤 Sending ${_messageQueue.length} queued messages');
-    
+
     final messages = List<Map<String, dynamic>>.from(_messageQueue);
     _messageQueue.clear();
-    
+
     for (final message in messages) {
       _send(message);
     }
@@ -415,11 +566,112 @@ class GatewayWebSocketClient {
     }
   }
 
+  Map<String, dynamic> _normalizePayload(dynamic payload) {
+    if (payload is Map<String, dynamic>) {
+      return payload;
+    }
+    if (payload is Map) {
+      return payload.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+    }
+    if (payload == null) {
+      return {};
+    }
+    return {'value': payload};
+  }
+
+  Future<void> _performHandshake() async {
+    _handshakeCompleter ??= Completer<void>();
+    try {
+      await _handshakeCompleter!.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          throw TimeoutException('Gateway connect challenge timeout');
+        },
+      );
+    } finally {
+      _handshakeCompleter = null;
+    }
+  }
+
+  Future<void> _sendConnectHandshake() async {
+    if (_channel == null || _pendingConnectId != null) {
+      return;
+    }
+
+    _pendingConnectId = _uuid.v4();
+    final connectParams = {
+      'minProtocol': _protocolVersion,
+      'maxProtocol': _protocolVersion,
+      'client': {
+        'id': 'openclaw-android',
+        'displayName': 'DuckBot Go',
+        'version': '3.0.7',
+        'platform': _platformName(),
+        'deviceFamily': 'phone',
+        'mode': 'ui',
+        'instanceId': 'duckbot-go-mobile',
+      },
+      'caps': <String>[],
+      if (_token != null && _token!.isNotEmpty) 'auth': {'token': _token},
+    };
+
+    try {
+      _channel!.sink.add(jsonEncode({
+        'type': 'req',
+        'id': _pendingConnectId,
+        'method': 'connect',
+        'params': connectParams,
+      }));
+    } catch (e) {
+      final exception =
+          Exception('Failed to send gateway connect handshake: $e');
+      _pendingConnectId = null;
+      if (_handshakeCompleter != null && !_handshakeCompleter!.isCompleted) {
+        _handshakeCompleter!.completeError(exception);
+      }
+    }
+  }
+
+  String _platformName() {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'android';
+      case TargetPlatform.iOS:
+        return 'ios';
+      case TargetPlatform.macOS:
+        return 'macos';
+      case TargetPlatform.windows:
+        return 'windows';
+      case TargetPlatform.linux:
+        return 'linux';
+      case TargetPlatform.fuchsia:
+        return 'fuchsia';
+    }
+  }
+
+  void _failPendingRequests(Object error) {
+    if (_pendingRequests.isEmpty) return;
+    final pending = Map<String, Completer<Map<String, dynamic>>>.from(
+      _pendingRequests,
+    );
+    _pendingRequests.clear();
+    for (final completer in pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+  }
+
   /// Dispose of resources
   void dispose() {
-    disconnect();
+    _failPendingRequests(Exception('Gateway WebSocket client disposed'));
+    unawaited(disconnect());
     _messageController.close();
     _stateController.close();
-    _instance = null;
+    if (identical(_instance, this)) {
+      _instance = null;
+    }
   }
 }

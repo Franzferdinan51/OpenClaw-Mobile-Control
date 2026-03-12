@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/gateway_service.dart';
 import '../services/termux_run_command_service.dart';
 import '../utils/android_package_detector.dart';
+import 'termux_hub_screen.dart';
 
 class TermuxScreen extends StatefulWidget {
   const TermuxScreen({super.key});
@@ -26,6 +27,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
   bool _isGatewayRunning = false;
   String? _termuxVersion;
   String? _termuxApiVersion;
+  TermuxCommandResult? _lastCommandResult;
   final String _gatewayUrl = 'http://127.0.0.1:18789';
 
   @override
@@ -147,7 +149,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
     _addOutput(trimmedScript, isCommand: true);
 
     try {
-      final success = await _bridge.runCommand(
+      final result = await _bridge.runCommandDetailed(
         script: trimmedScript,
         label: label,
         description: description,
@@ -155,10 +157,20 @@ class _TermuxScreenState extends State<TermuxScreen> {
       );
 
       if (!mounted) return;
+      _lastCommandResult = result;
 
-      if (success) {
+      if (result.requiresAllowExternalApps) {
         _addOutput(
-          'Command accepted by Termux. Watch the Termux session for output.',
+          'Termux rejected the command because allow-external-apps is disabled. Open Termux, add allow-external-apps=true to ~/.termux/termux.properties, run termux-reload-settings, then retry.',
+          isSystem: true,
+          isError: true,
+        );
+        _showAllowExternalAppsDialog();
+      } else if (result.accepted) {
+        _addOutput(
+          result.pending
+              ? 'Command accepted by Termux. Watch the Termux session for output.'
+              : 'Command finished. Review the Termux session for output.',
           isSystem: true,
           isSuccess: true,
         );
@@ -172,7 +184,10 @@ class _TermuxScreenState extends State<TermuxScreen> {
         }
       } else {
         _addOutput(
-          'Termux did not accept the command.',
+          _describeTermuxResult(
+            result,
+            fallback: 'Termux did not accept the command.',
+          ),
           isSystem: true,
           isError: true,
         );
@@ -211,6 +226,13 @@ class _TermuxScreenState extends State<TermuxScreen> {
     _showSnackBar('Setup commands copied');
   }
 
+  Future<void> _copyAllowExternalAppsFix() async {
+    await Clipboard.setData(
+      ClipboardData(text: _bridge.allowExternalAppsSetupScript.trim()),
+    );
+    _showSnackBar('allow-external-apps fix copied');
+  }
+
   Future<void> _launchTermux() async {
     final launched = await _bridge.launchTermux();
     if (!mounted) return;
@@ -230,6 +252,66 @@ class _TermuxScreenState extends State<TermuxScreen> {
         mounted) {
       _showSnackBar('Could not open $url');
     }
+  }
+
+  Future<void> _openTermuxHubCatalog() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const TermuxHubScreen(),
+      ),
+    );
+  }
+
+  String _describeTermuxResult(
+    TermuxCommandResult result, {
+    required String fallback,
+  }) {
+    if (result.requiresAllowExternalApps) {
+      return 'Termux needs ${TermuxRunCommandService.allowExternalAppsSnippet} in ~/.termux/termux.properties, then ${TermuxRunCommandService.allowExternalAppsReloadCommand}.';
+    }
+    if ((result.errorMessage ?? '').trim().isNotEmpty) {
+      return result.errorMessage!.trim();
+    }
+    if (result.exitCode != null) {
+      return 'Command exited with code ${result.exitCode}. Review Termux for output.';
+    }
+    return fallback;
+  }
+
+  void _showAllowExternalAppsDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enable Termux External Commands'),
+        content: const Text(
+          'Termux blocks external command intents until you enable allow-external-apps in ~/.termux/termux.properties. '
+          'Open Termux, add "allow-external-apps=true", run "termux-reload-settings", then retry.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _openUrl(TermuxRunCommandService.runCommandHelpUrl);
+            },
+            child: const Text('Open Docs'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _copyAllowExternalAppsFix();
+            },
+            child: const Text('Copy Fix'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _launchTermux();
+            },
+            child: const Text('Open Termux'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _addOutput(
@@ -386,6 +468,14 @@ class _TermuxScreenState extends State<TermuxScreen> {
               _isGatewayRunning ? 'Reachable' : 'Offline',
               _isGatewayRunning,
             ),
+            if (_lastCommandResult?.requiresAllowExternalApps == true) ...[
+              const SizedBox(width: 8),
+              _statusChip(
+                'External Apps',
+                'Enable in Termux',
+                false,
+              ),
+            ],
           ],
         ),
       ),
@@ -417,7 +507,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
           .primaryContainer
           .withValues(alpha: 0.35),
       child: Text(
-        'This screen sends commands to the official Termux app. Command output appears in Termux, not inside DuckBot.',
+        'This screen sends commands to the official Termux app. Command output appears in Termux, not inside DuckBot. If commands are rejected, enable allow-external-apps=true in ~/.termux/termux.properties and run termux-reload-settings.',
         style: Theme.of(context).textTheme.bodySmall,
       ),
     );
@@ -446,6 +536,11 @@ class _TermuxScreenState extends State<TermuxScreen> {
               'Copy Setup',
               Icons.copy,
               _copySetupCommands,
+            ),
+            _quickActionBtn(
+              'External Apps',
+              Icons.tune,
+              _copyAllowExternalAppsFix,
             ),
             _quickActionBtn(
               'Send Setup',
@@ -483,6 +578,11 @@ class _TermuxScreenState extends State<TermuxScreen> {
                 script: _bridge.statusScript,
                 description: 'Check OpenClaw status inside Termux',
               ),
+            ),
+            _quickActionBtn(
+              'Tool Catalog',
+              Icons.explore,
+              _openTermuxHubCatalog,
             ),
             if (!_hasRunCommandPermission)
               _quickActionBtn(

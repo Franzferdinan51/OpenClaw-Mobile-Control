@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 import '../models/gateway_status.dart';
 import '../models/agent_session.dart';
 import '../models/autowork_config.dart';
 import '../models/chat_message.dart';
+import 'gateway_websocket_client.dart';
 
 /// Service for communicating with OpenClaw Gateway
 ///
@@ -36,6 +38,7 @@ import '../models/chat_message.dart';
 /// - POST /api/mobile/control/pause-all - Pause all agents
 /// - POST /api/mobile/control/resume-all - Resume all agents
 class GatewayService {
+  static const Uuid _uuid = Uuid();
   String baseUrl;
   String? token;
 
@@ -354,6 +357,8 @@ class GatewayService {
 
   /// Send a message to a specific agent session
   Future<bool> sendAgentMessage(String sessionKey, String message) async {
+    final idempotencyKey = _uuid.v4();
+
     try {
       final response = await http
           .post(
@@ -363,16 +368,35 @@ class GatewayService {
               'action': 'send',
               'sessionKey': sessionKey,
               'message': message,
+              'idempotencyKey': idempotencyKey,
             }),
           )
           .timeout(const Duration(seconds: 15));
 
-      if (response.statusCode != 200) return false;
-
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      return json['ok'] == true || json['success'] == true;
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        if (json['ok'] == true || json['success'] == true) {
+          return true;
+        }
+      }
     } catch (e) {
       print('Error sending agent message: $e');
+    }
+
+    try {
+      await _requestViaGatewayRpc(
+        'chat.send',
+        {
+          'sessionKey': sessionKey,
+          'message': message,
+          'deliver': false,
+          'idempotencyKey': idempotencyKey,
+        },
+        timeout: const Duration(seconds: 30),
+      );
+      return true;
+    } catch (e) {
+      print('Error sending agent message via gateway RPC: $e');
       return false;
     }
   }
@@ -431,19 +455,65 @@ class GatewayService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final result = json['result'] as Map<String, dynamic>?;
-        final messages = (result != null && result['messages'] is List)
-            ? result['messages'] as List
-            : (json['messages'] as List?) ?? (json['history'] as List?) ?? [];
-
-        if (messages.isNotEmpty) {
-          return messages.map((m) => ChatMessage.fromJson(m)).toList();
+        final parsed = _parseChatMessages(json);
+        if (parsed != null) {
+          return parsed;
         }
       }
     } catch (e) {
       print('Error getting chat history: $e');
     }
-    return [];
+
+    try {
+      final payload = await _requestViaGatewayRpc(
+        'chat.history',
+        {
+          'sessionKey': sessionKey,
+          'limit': limit,
+        },
+      );
+      return _parseChatMessages(payload) ?? [];
+    } catch (e) {
+      print('Error getting chat history via gateway RPC: $e');
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _requestViaGatewayRpc(
+    String method,
+    Map<String, dynamic> params, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final client = GatewayWebSocketClient.isolated();
+    client.configure(baseUrl: baseUrl, token: token);
+
+    try {
+      final payload = await client.request(
+        method,
+        params,
+        timeout: timeout,
+      );
+      return payload;
+    } finally {
+      await client.disconnect();
+      client.dispose();
+    }
+  }
+
+  List<ChatMessage>? _parseChatMessages(Map<String, dynamic> json) {
+    final result = json['result'] as Map<String, dynamic>?;
+    final messages = (result != null && result['messages'] is List)
+        ? result['messages'] as List
+        : (json['messages'] as List?) ?? (json['history'] as List?) ?? [];
+
+    return messages
+        .whereType<Map>()
+        .map((message) => ChatMessage.fromJson(
+              message.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ),
+            ))
+        .toList();
   }
 
   // ============================================================
