@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/nodejs_installer_service.dart';
 import '../services/gateway_service.dart';
+import '../services/openclaw_companion_service.dart';
 import '../services/termux_service.dart';
 import '../services/termux_run_command_service.dart';
 import '../utils/android_package_detector.dart';
@@ -35,6 +36,12 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     with TickerProviderStateMixin {
   final TermuxService _termuxService = TermuxService();
   final TermuxRunCommandService _termuxBridge = TermuxRunCommandService();
+  final OpenClawCompanionService _companionService =
+      OpenClawCompanionService();
+  final TextEditingController _remoteGatewayController =
+      TextEditingController();
+  final TextEditingController _remoteTokenController = TextEditingController();
+  final TextEditingController _nodeNameController = TextEditingController();
 
   // Installation state
   InstallationState _state = InstallationState.idle;
@@ -58,6 +65,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   // Gateway info after installation
   final String _gatewayUrl = 'http://127.0.0.1:18789';
   bool _gatewayRunning = false;
+  bool _companionConfigured = false;
+  OpenClawCompanionRuntimeStatus? _companionRuntimeStatus;
 
   @override
   void initState() {
@@ -68,6 +77,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     )..repeat(reverse: true);
 
     _checkReadiness();
+    _loadCompanionConfig();
   }
 
   Future<void> _checkReadiness() async {
@@ -114,6 +124,246 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       _isCheckingReadiness = false;
       _hasShownReadiness = true;
     });
+  }
+
+  Future<void> _loadCompanionConfig() async {
+    final config = await _companionService.loadConfig();
+    if (!mounted) return;
+
+    _remoteGatewayController.text = config.normalizedGatewayWsUrl;
+    _remoteTokenController.text = config.gatewayToken ?? '';
+    _nodeNameController.text = config.nodeDisplayName;
+
+    setState(() {
+      _companionConfigured = config.gatewayEndpoint.trim().isNotEmpty;
+    });
+
+    await _refreshCompanionStatus(logResult: false);
+  }
+
+  OpenClawCompanionConfig _currentCompanionConfig() {
+    return OpenClawCompanionConfig(
+      gatewayEndpoint: _remoteGatewayController.text.trim().isEmpty
+          ? 'ws://127.0.0.1:18789'
+          : _remoteGatewayController.text.trim(),
+      gatewayToken: _remoteTokenController.text.trim().isEmpty
+          ? null
+          : _remoteTokenController.text.trim(),
+      nodeDisplayName: _nodeNameController.text.trim().isEmpty
+          ? OpenClawCompanionService.defaultNodeDisplayName
+          : _nodeNameController.text.trim(),
+    );
+  }
+
+  Future<void> _saveCompanionConfig() async {
+    final config = _currentCompanionConfig();
+    await _companionService.saveConfig(config);
+
+    if (!mounted) return;
+    setState(() {
+      _companionConfigured = true;
+    });
+
+    _log('info', 'Companion target saved', config.normalizedGatewayWsUrl);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Companion target saved: ${config.normalizedGatewayWsUrl}',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _refreshCompanionStatus({bool logResult = true}) async {
+    final runtimeStatus = await _companionService.getRuntimeStatus();
+    if (!mounted) return;
+
+    setState(() {
+      _companionRuntimeStatus = runtimeStatus;
+    });
+
+    if (logResult) {
+      final summary = runtimeStatus.bridgeReachable
+          ? runtimeStatus.gatewayReachable
+              ? 'Companion bridge is live and the gateway is reachable'
+              : 'Companion bridge is live but the remote gateway is still unavailable'
+          : runtimeStatus.error ?? 'Companion bridge is not running yet';
+      _log(
+        runtimeStatus.bridgeReachable ? 'info' : 'warning',
+        summary,
+      );
+    }
+  }
+
+  Future<void> _startCompanionBridge() async {
+    final result = await _termuxBridge.runCommandDetailed(
+      script: _companionService.buildStartScript(),
+      label: 'Start OpenClaw Companion',
+      description:
+          'Start the local DuckBot OpenClaw companion bridge on this device',
+      background: false,
+    );
+
+    if (!mounted) return;
+
+    if (result.requiresAllowExternalApps) {
+      _showAllowExternalAppsDialog();
+      return;
+    }
+
+    if (!result.accepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _describeTermuxResult(
+              result,
+              fallback: 'Failed to start the local companion bridge.',
+            ),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    _log('info', 'Companion bridge start sent to Termux');
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        _refreshCompanionStatus();
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.pending
+              ? 'Companion bridge launch sent to Termux'
+              : 'Companion bridge start completed',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _installAndroidNode() async {
+    final config = _currentCompanionConfig();
+    await _companionService.saveConfig(config);
+
+    final result = await _termuxBridge.runCommandDetailed(
+      script: _companionService.buildNodeInstallScript(config),
+      label: 'Install Android Node Host',
+      description:
+          'Install the OpenClaw Android node host service in Termux',
+      background: false,
+    );
+
+    if (!mounted) return;
+
+    if (result.requiresAllowExternalApps) {
+      _showAllowExternalAppsDialog();
+      return;
+    }
+
+    final success = result.accepted;
+    _log(
+      success ? 'info' : 'error',
+      success
+          ? 'Android node install sent to Termux'
+          : _describeTermuxResult(
+              result,
+              fallback: 'Failed to install the Android node host.',
+            ),
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Android node install sent to Termux'
+              : _describeTermuxResult(
+                  result,
+                  fallback: 'Android node install failed',
+                ),
+        ),
+        backgroundColor: success ? Colors.green : Colors.red,
+      ),
+    );
+
+    if (success) {
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          _refreshCompanionStatus(logResult: false);
+        }
+      });
+    }
+  }
+
+  Future<void> _startAndroidNode() async {
+    final config = _currentCompanionConfig();
+    await _companionService.saveConfig(config);
+
+    final result = await _termuxBridge.runCommandDetailed(
+      script: _companionService.buildNodeRunScript(config),
+      label: 'Start Android Node Host',
+      description:
+          'Run the OpenClaw Android node host in the background from Termux',
+      background: false,
+    );
+
+    if (!mounted) return;
+
+    if (result.requiresAllowExternalApps) {
+      _showAllowExternalAppsDialog();
+      return;
+    }
+
+    final success = result.accepted;
+    _log(
+      success ? 'info' : 'error',
+      success
+          ? 'Android node start sent to Termux'
+          : _describeTermuxResult(
+              result,
+              fallback: 'Failed to start the Android node host.',
+            ),
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'Android node start sent to Termux'
+              : _describeTermuxResult(
+                  result,
+                  fallback: 'Android node start failed',
+                ),
+        ),
+        backgroundColor: success ? Colors.green : Colors.red,
+      ),
+    );
+
+    if (success) {
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          _refreshCompanionStatus(logResult: false);
+        }
+      });
+    }
+  }
+
+  Future<void> _useCompanionInApp() async {
+    await _companionService.useCompanionAsGateway();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'DuckBot now points to ${_companionService.baseUrl}',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   void _scrollToBottom() {
@@ -164,20 +414,23 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       _state = InstallationState.installingOpenClaw;
       _currentStep = InstallationStep.installingOpenClaw;
       _progress = 0.2;
-      _statusMessage = 'Sending no-root setup to Termux...';
+      _statusMessage = 'Sending no-root companion setup to Termux...';
       _errorMessage = null;
     });
 
-    _log('info', 'Sending no-root install command to Termux');
+    final config = _currentCompanionConfig();
+    final installScript = _companionService.buildInstallScript(config);
+
+    _log('info', 'Sending no-root OpenClaw companion install to Termux');
     _log('info', 'Command sequence:');
-    _log('info', _termuxBridge.noRootInstallScript.trim());
+    _log('info', installScript.trim());
 
     try {
       final result = await _termuxBridge.runCommandDetailed(
-        script: _termuxBridge.noRootInstallScript,
-        label: 'DuckBot No-Root Setup',
+        script: installScript,
+        label: 'DuckBot Companion Setup',
         description:
-            'Install Node.js, termux-api package, storage access, and OpenClaw',
+            'Install Node.js, OpenClaw CLI, and the local DuckBot companion bridge',
         background: false,
       );
 
@@ -193,20 +446,23 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             'Termux rejected RUN_COMMAND: allow-external-apps must be enabled in ~/.termux/termux.properties');
         _showAllowExternalAppsDialog();
       } else if (result.accepted) {
+        await _companionService.saveConfig(config);
+        if (!mounted) return;
         setState(() {
           _setupSentToTermux = true;
+          _companionConfigured = true;
           _state = InstallationState.idle;
           _progress = 1.0;
           _statusMessage = result.pending
-              ? 'Setup sent to Termux. Finish there, then return and test connection.'
-              : 'Setup command finished. Review Termux output, then test connection.';
+              ? 'Companion setup sent to Termux. Finish there, then start the bridge and test it.'
+              : 'Companion setup command finished. Review Termux output, then start the bridge.';
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(result.pending
-                ? 'Setup sent to Termux. Complete it there and return here.'
-                : 'Setup command completed. Review Termux, then continue here.'),
+                ? 'Companion setup sent to Termux. Complete it there and return here.'
+                : 'Companion setup command completed. Review Termux, then continue here.'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 4),
           ),
@@ -289,7 +545,11 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
       _statusMessage = 'Testing connection...';
     });
 
-    final gatewayService = GatewayService(baseUrl: _gatewayUrl);
+    final targetUrl = _companionConfigured ||
+            _companionRuntimeStatus?.bridgeReachable == true
+        ? _companionService.baseUrl
+        : _gatewayUrl;
+    final gatewayService = GatewayService(baseUrl: targetUrl);
     final result = await gatewayService.checkConnection();
 
     if (mounted) {
@@ -298,7 +558,7 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
         _gatewayRunning = success;
         _state = success ? InstallationState.completed : _state;
         _statusMessage = success
-            ? 'Gateway is reachable at $_gatewayUrl'
+            ? 'Gateway is reachable at $targetUrl'
             : 'Gateway is not reachable yet';
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -338,7 +598,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
 
   Future<void> _copyNoRootSetupCommands() async {
     await Clipboard.setData(
-      ClipboardData(text: _termuxBridge.noRootInstallScript.trim()),
+      ClipboardData(
+        text: _companionService.buildInstallScript(_currentCompanionConfig()).trim(),
+      ),
     );
 
     if (!mounted) return;
@@ -352,13 +614,18 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
 
   Future<void> _copyGatewayStartCommand() async {
     await Clipboard.setData(
-      ClipboardData(text: _termuxBridge.startGatewayScript),
+      ClipboardData(
+        text: (_companionConfigured ||
+                _companionRuntimeStatus?.bridgeReachable == true)
+            ? _companionService.buildStartScript()
+            : _termuxBridge.startGatewayScript,
+      ),
     );
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Gateway start command copied'),
+        content: Text('Local runtime start command copied'),
         backgroundColor: Colors.green,
       ),
     );
@@ -545,7 +812,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   '6. Run: pkg install -y nodejs termux-api',
                   '7. Run: termux-setup-storage',
                   '8. Run: npm install -g openclaw --unsafe-perm',
-                  '9. Run: openclaw gateway start --port 18789',
+                  '9. Paste the companion install script copied from this screen',
+                  '10. Run: node ~/.duckbot-go/openclaw-companion/server.mjs',
                 ],
               ),
             ],
@@ -587,6 +855,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
 
   @override
   void dispose() {
+    _remoteGatewayController.dispose();
+    _remoteTokenController.dispose();
+    _nodeNameController.dispose();
     _pulseController.dispose();
     _logsScrollController.dispose();
     super.dispose();
@@ -669,6 +940,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                       _gatewayRunning)
                     const SizedBox(height: 24),
 
+                  _buildCompanionCard(colorScheme),
+                  const SizedBox(height: 24),
+
                   // Action buttons
                   _buildActionButtons(colorScheme),
                   const SizedBox(height: 24),
@@ -728,8 +1002,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Use the official Termux app and Termux:API app to run OpenClaw '
-              'directly on Android with no root access.',
+              'Use the official Termux app and Termux:API app to install the '
+              'DuckBot OpenClaw companion bridge and optional Android node host with no root access.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
@@ -1181,16 +1455,25 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
   }
 
   Widget _buildSuccessCard(ColorScheme colorScheme) {
-    final gatewayUrl = _gatewayUrl;
+    final usingCompanion =
+        _companionConfigured || _companionRuntimeStatus?.bridgeReachable == true;
+    final gatewayUrl =
+        usingCompanion ? _companionService.baseUrl : _gatewayUrl;
     final title = _gatewayRunning
-        ? 'Gateway Ready'
+        ? usingCompanion
+            ? 'Companion Ready'
+            : 'Gateway Ready'
         : _setupSentToTermux
             ? 'Setup Sent to Termux'
             : 'Local Setup Ready';
     final description = _gatewayRunning
-        ? 'The local OpenClaw gateway responded. You can test or connect to it from this device.'
+        ? usingCompanion
+            ? 'The local companion bridge can reach the configured gateway. DuckBot can use it directly from this device.'
+            : 'The local OpenClaw gateway responded. You can test or connect to it from this device.'
         : _setupSentToTermux
-            ? 'Finish the install in Termux, then return here and start or test the gateway.'
+            ? usingCompanion
+                ? 'Finish the install in Termux, then start the companion bridge and test it here.'
+                : 'Finish the install in Termux, then return here and start or test the gateway.'
             : 'Local setup commands are ready. Continue in Termux to finish installation.';
 
     return Card(
@@ -1273,8 +1556,12 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                       const SizedBox(width: 8),
                       Text(
                         _gatewayRunning
-                            ? 'Gateway reachable'
-                            : 'Awaiting verification',
+                            ? usingCompanion
+                                ? 'Companion and gateway reachable'
+                                : 'Gateway reachable'
+                            : usingCompanion
+                                ? 'Awaiting bridge verification'
+                                : 'Awaiting verification',
                         style: TextStyle(
                           color: _gatewayRunning ? Colors.green : Colors.orange,
                           fontWeight: FontWeight.w500,
@@ -1284,6 +1571,200 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompanionCard(ColorScheme colorScheme) {
+    final readinessReady = _readinessSummary?.isReady ?? false;
+    final canUseTermux = readinessReady && _hasRunCommandPermission;
+    final runtime = _companionRuntimeStatus;
+    final bridgeRunning = runtime?.bridgeReachable == true;
+    final gatewayReachable = runtime?.gatewayReachable == true;
+    final nodeConfigured = runtime?.nodeConfigured == true;
+    final nodeConnected = runtime?.nodeConnected == true;
+    final endpointPreview = _remoteGatewayController.text.trim().isEmpty
+        ? 'ws://127.0.0.1:18789'
+        : OpenClawCompanionService.normalizeGatewayWsUrl(
+            _remoteGatewayController.text.trim(),
+          );
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: bridgeRunning ? Colors.green : colorScheme.outlineVariant,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.hub,
+                  color: bridgeRunning ? Colors.green : colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Companion Bridge (Recommended)',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: bridgeRunning
+                        ? Colors.green.withOpacity(0.12)
+                        : colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    bridgeRunning ? 'Live' : 'Stopped',
+                    style: TextStyle(
+                      color: bridgeRunning ? Colors.green : colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'This installs a local HTTP bridge in Termux so DuckBot can talk to a remote OpenClaw gateway over the official CLI. '
+              'It also gives this Android device an optional node-host path for agents.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _remoteGatewayController,
+              decoration: const InputDecoration(
+                labelText: 'Remote Gateway URL',
+                hintText: 'wss://gateway.example.com:18789',
+                prefixIcon: Icon(Icons.cloud_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _remoteTokenController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Remote Gateway Token',
+                hintText: 'Optional shared token',
+                prefixIcon: Icon(Icons.key_outlined),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nodeNameController,
+              decoration: const InputDecoration(
+                labelText: 'Android Node Display Name',
+                hintText: 'DuckBot Android Node',
+                prefixIcon: Icon(Icons.smartphone),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildInfoRow('DuckBot URL', _companionService.baseUrl),
+                  _buildInfoRow('Gateway Target', endpointPreview),
+                  _buildInfoRow(
+                    'Bridge',
+                    bridgeRunning
+                        ? 'Running on-device'
+                        : runtime?.error ?? 'Not running yet',
+                  ),
+                  _buildInfoRow(
+                    'Gateway',
+                    gatewayReachable
+                        ? 'Reachable through companion'
+                        : 'Waiting on remote gateway',
+                  ),
+                  _buildInfoRow(
+                    'Android Node',
+                    nodeConnected
+                        ? 'Connected'
+                        : nodeConfigured
+                            ? 'Installed / waiting for approval'
+                            : 'Not installed',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _saveCompanionConfig,
+                  icon: const Icon(Icons.save),
+                  label: const Text('Save Target'),
+                ),
+                FilledButton.icon(
+                  onPressed: canUseTermux ? _startInstallation : null,
+                  icon: const Icon(Icons.download),
+                  label: const Text('Install / Repair'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: canUseTermux ? _startCompanionBridge : null,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Start Bridge'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await _refreshCompanionStatus();
+                    await _testConnection();
+                  },
+                  icon: const Icon(Icons.network_check),
+                  label: const Text('Test Bridge'),
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      bridgeRunning && gatewayReachable ? _useCompanionInApp : null,
+                  icon: const Icon(Icons.link),
+                  label: const Text('Use In App'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: canUseTermux ? _installAndroidNode : null,
+                  icon: const Icon(Icons.memory),
+                  label: const Text('Install Node'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: canUseTermux ? _startAndroidNode : null,
+                  icon: const Icon(Icons.bolt),
+                  label: const Text('Run Node'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Use a loopback URL, SSH tunnel, or `wss://` remote gateway. OpenClaw blocks insecure non-loopback `ws://` targets by default.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
@@ -1331,6 +1812,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
     final showPostSetup = _setupSentToTermux ||
         _state == InstallationState.completed ||
         _gatewayRunning;
+    final usingCompanion =
+        _companionConfigured || _companionRuntimeStatus?.bridgeReachable == true;
 
     if (_state == InstallationState.error) {
       return Column(
@@ -1373,13 +1856,18 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
         children: [
           if (!_gatewayRunning)
             FilledButton.icon(
-              onPressed: _startGateway,
+              onPressed:
+                  usingCompanion ? _startCompanionBridge : _startGateway,
               style: FilledButton.styleFrom(
                 minimumSize: const Size(double.infinity, 56),
                 backgroundColor: Colors.green,
               ),
-              icon: const Icon(Icons.rocket_launch),
-              label: const Text('Send Gateway Start to Termux'),
+              icon: Icon(usingCompanion ? Icons.play_arrow : Icons.rocket_launch),
+              label: Text(
+                usingCompanion
+                    ? 'Start Companion Bridge'
+                    : 'Send Gateway Start to Termux',
+              ),
             )
           else ...[
             FilledButton.icon(
@@ -1399,9 +1887,24 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
                 minimumSize: const Size(double.infinity, 48),
               ),
               icon: const Icon(Icons.network_check),
-              label: const Text('Check Gateway Reachability'),
+              label: Text(
+                usingCompanion
+                    ? 'Check Companion Reachability'
+                    : 'Check Gateway Reachability',
+              ),
             ),
           if (!_gatewayRunning) const SizedBox(height: 12),
+          if (usingCompanion) ...[
+            OutlinedButton.icon(
+              onPressed: _useCompanionInApp,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+              ),
+              icon: const Icon(Icons.link),
+              label: const Text('Use Companion In App'),
+            ),
+            const SizedBox(height: 12),
+          ],
           OutlinedButton.icon(
             onPressed: () {
               Navigator.push(
@@ -1465,7 +1968,9 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
               minimumSize: const Size(double.infinity, 48),
             ),
             icon: const Icon(Icons.copy_all),
-            label: const Text('Copy Gateway Command'),
+            label: Text(
+              usingCompanion ? 'Copy Bridge Command' : 'Copy Gateway Command',
+            ),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -1733,7 +2238,8 @@ class _LocalInstallerScreenState extends State<LocalInstallerScreen>
             Text(
               '• Node.js inside Termux\n'
               '• Termux CLI package for `termux-api`\n'
-              '• OpenClaw CLI and local gateway\n'
+              '• OpenClaw CLI and local companion bridge\n'
+              '• Optional Android node host service\n'
               '• Optional shared storage access via `termux-setup-storage`',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colorScheme.onSurfaceVariant,

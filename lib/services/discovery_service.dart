@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/gateway_status.dart';
+import 'openclaw_companion_service.dart';
 
 /// Log entry for discovery process debugging
 class DiscoveryLogEntry {
@@ -264,7 +265,10 @@ class DiscoveryService {
 
     try {
       // STEP 1: Check localhost first (fastest - for on-device gateway)
-      _log('info', 'Step 1: Checking localhost (127.0.0.1:18789)');
+      _log(
+        'info',
+        'Step 1: Checking localhost companion and gateway endpoints',
+      );
       _updateProgress(0, 1, 'Checking localhost...');
       final localhostGateway = await _checkLocalhost();
       if (localhostGateway != null) {
@@ -392,11 +396,29 @@ class DiscoveryService {
 
   /// Check localhost for on-device gateway
   Future<GatewayConnection?> _checkLocalhost() async {
-    return await _quickCheckGateway(
-      '127.0.0.1',
-      18789,
-      name: 'Local Gateway (This Device)',
-    );
+    final localhostCandidates = <({int port, String name})>[
+      (
+        port: OpenClawCompanionService.defaultPort,
+        name: 'Local OpenClaw Companion',
+      ),
+      (
+        port: 18789,
+        name: 'Local Gateway (This Device)',
+      ),
+    ];
+
+    for (final candidate in localhostCandidates) {
+      final gateway = await _quickCheckGateway(
+        '127.0.0.1',
+        candidate.port,
+        name: candidate.name,
+      );
+      if (gateway != null) {
+        return gateway;
+      }
+    }
+
+    return null;
   }
 
   /// Scan using mDNS/Bonjour with improved Android compatibility

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/gateway_service.dart';
+import '../services/openclaw_companion_service.dart';
 import '../services/termux_run_command_service.dart';
 import '../utils/android_package_detector.dart';
 import 'termux_hub_screen.dart';
@@ -15,6 +16,8 @@ class TermuxScreen extends StatefulWidget {
 
 class _TermuxScreenState extends State<TermuxScreen> {
   final TermuxRunCommandService _bridge = TermuxRunCommandService();
+  final OpenClawCompanionService _companionService =
+      OpenClawCompanionService();
   final TextEditingController _commandController = TextEditingController();
   final ScrollController _outputScrollController = ScrollController();
   final List<_OutputLine> _output = [];
@@ -24,6 +27,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
   bool _isTermuxInstalled = false;
   bool _isTermuxApiInstalled = false;
   bool _hasRunCommandPermission = false;
+  bool _isCompanionRunning = false;
   bool _isGatewayRunning = false;
   String? _termuxVersion;
   String? _termuxApiVersion;
@@ -60,8 +64,12 @@ class _TermuxScreenState extends State<TermuxScreen> {
         );
       }
 
-      final gatewayResult =
-          await GatewayService(baseUrl: _gatewayUrl).checkConnection();
+      final companionRuntime = await _companionService.getRuntimeStatus();
+      final gatewayResult = await GatewayService(
+        baseUrl: companionRuntime.bridgeReachable
+            ? _companionService.baseUrl
+            : _gatewayUrl,
+      ).checkConnection();
       final gatewayRunning = gatewayResult['success'] == true;
 
       if (!mounted) return;
@@ -70,6 +78,7 @@ class _TermuxScreenState extends State<TermuxScreen> {
         _isTermuxInstalled = termuxResult.isInstalled;
         _isTermuxApiInstalled = termuxApiResult.isInstalled;
         _hasRunCommandPermission = hasPermission;
+        _isCompanionRunning = companionRuntime.bridgeReachable;
         _isGatewayRunning = gatewayRunning;
         _termuxVersion = termuxResult.versionName;
         _termuxApiVersion = termuxApiResult.versionName;
@@ -101,9 +110,17 @@ class _TermuxScreenState extends State<TermuxScreen> {
           isWarning: !_hasRunCommandPermission,
         );
         _addOutput(
+          _isCompanionRunning
+              ? 'Companion bridge is reachable at ${_companionService.baseUrl}'
+              : 'Companion bridge is not reachable yet',
+          isSystem: true,
+          isSuccess: _isCompanionRunning,
+          isWarning: !_isCompanionRunning,
+        );
+        _addOutput(
           _isGatewayRunning
-              ? 'Gateway is reachable at $_gatewayUrl'
-              : 'Gateway is not reachable at $_gatewayUrl',
+              ? 'Gateway is reachable via ${_isCompanionRunning ? _companionService.baseUrl : _gatewayUrl}'
+              : 'Gateway is not reachable through the local bridge or legacy local port',
           isSystem: true,
           isSuccess: _isGatewayRunning,
           isWarning: !_isGatewayRunning,
@@ -220,10 +237,23 @@ class _TermuxScreenState extends State<TermuxScreen> {
   }
 
   Future<void> _copySetupCommands() async {
+    final config = await _companionService.loadConfig();
     await Clipboard.setData(
-      ClipboardData(text: _bridge.noRootInstallScript.trim()),
+      ClipboardData(
+        text: _companionService.buildInstallScript(config).trim(),
+      ),
     );
-    _showSnackBar('Setup commands copied');
+    _showSnackBar('Companion setup commands copied');
+  }
+
+  Future<void> _sendCompanionSetup() async {
+    final config = await _companionService.loadConfig();
+    await _sendCommand(
+      label: 'DuckBot Companion Setup',
+      script: _companionService.buildInstallScript(config),
+      description:
+          'Install Node.js, OpenClaw CLI, and the DuckBot companion bridge',
+    );
   }
 
   Future<void> _copyAllowExternalAppsFix() async {
@@ -464,6 +494,12 @@ class _TermuxScreenState extends State<TermuxScreen> {
             ),
             const SizedBox(width: 8),
             _statusChip(
+              'Bridge',
+              _isCompanionRunning ? 'Reachable' : 'Offline',
+              _isCompanionRunning,
+            ),
+            const SizedBox(width: 8),
+            _statusChip(
               'Gateway',
               _isGatewayRunning ? 'Reachable' : 'Offline',
               _isGatewayRunning,
@@ -545,11 +581,15 @@ class _TermuxScreenState extends State<TermuxScreen> {
             _quickActionBtn(
               'Send Setup',
               Icons.download,
+              _sendCompanionSetup,
+            ),
+            _quickActionBtn(
+              'Start Bridge',
+              Icons.hub,
               () => _sendCommand(
-                label: 'DuckBot No-Root Setup',
-                script: _bridge.noRootInstallScript,
-                description:
-                    'Install Node.js, termux-api, storage access, and OpenClaw',
+                label: 'Start OpenClaw Companion',
+                script: _companionService.buildStartScript(),
+                description: 'Start the local DuckBot companion bridge',
               ),
             ),
             _quickActionBtn(

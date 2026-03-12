@@ -5,6 +5,20 @@ All notable changes to DuckBot Go will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0+310] - 2026-03-11
+
+### Added
+- Latest desktop/Codex companion-service pass merged from `DuckBot-Go-Project`
+- New `openclaw_companion_service.dart`
+
+### Changed
+- `app.dart`, `local_installer_screen.dart`, `termux_screen.dart`, and `discovery_service.dart` updated from the newest desktop project state
+- README, status, changelog, and in-app version strings aligned to v3.1.0
+
+### Validation
+- `flutter test` ✅
+- `flutter build apk --release` ✅
+
 ## [3.0.9+309] - 2026-03-11
 
 ### Added

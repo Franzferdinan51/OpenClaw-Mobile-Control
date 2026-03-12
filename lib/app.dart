@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/gateway_service.dart';
 import '../services/discovery_service.dart';
+import '../services/openclaw_companion_service.dart';
 import '../services/app_settings_service.dart';
 import '../services/connection_monitor_service.dart';
 import '../services/theme_service.dart';
@@ -31,6 +32,8 @@ class DuckBotGoApp extends StatefulWidget {
 
 class _DuckBotGoAppState extends State<DuckBotGoApp> {
   final DiscoveryService _discoveryService = DiscoveryService();
+  final OpenClawCompanionService _companionService =
+      OpenClawCompanionService();
   static const Duration _startupProbeTimeout = Duration(seconds: 2);
   static const Duration _backgroundDiscoveryTimeout = Duration(seconds: 18);
   GatewayService? _gatewayService;
@@ -78,6 +81,10 @@ class _DuckBotGoAppState extends State<DuckBotGoApp> {
 
     final lastConnected = await _discoveryService.getLastConnected();
     final fallbackCandidates = <Map<String, String?>>[
+      {
+        'url': _companionService.baseUrl,
+        'name': 'Local OpenClaw Companion',
+      },
       {
         'url': 'http://127.0.0.1:18789',
         'name': 'Local Gateway (This Device)',
